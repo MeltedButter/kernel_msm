@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,6 +29,12 @@
 #define CPP_HW_VERSION_1_1_0  0x10010000
 #define CPP_HW_VERSION_1_1_1  0x10010001
 #define CPP_HW_VERSION_2_0_0  0x20000000
+#define CPP_HW_VERSION_4_0_0  0x40000000
+#define CPP_HW_VERSION_4_1_0  0x40010000
+#define CPP_HW_VERSION_5_0_0  0x50000000
+#define CPP_HW_VERSION_5_1_0  0x50010000
+
+#define VBIF_VERSION_2_3_0  0x20030000
 
 #define MAX_ACTIVE_CPP_INSTANCE 8
 #define MAX_CPP_PROCESSING_FRAME 2
@@ -79,9 +85,10 @@
 #define MSM_CPP_START_ADDRESS		0x0
 #define MSM_CPP_END_ADDRESS			0x3F00
 
-#define MSM_CPP_POLL_RETRIES		20
+#define MSM_CPP_POLL_RETRIES		200
 #define MSM_CPP_TASKLETQ_SIZE		16
 #define MSM_CPP_TX_FIFO_LEVEL		16
+#define MSM_CPP_RX_FIFO_LEVEL		512
 
 struct cpp_subscribe_info {
 	struct v4l2_fh *vfh;
@@ -166,12 +173,6 @@ struct msm_cpp_work_t {
 	struct cpp_device *cpp_dev;
 };
 
-struct msm_cpp_clock_settings_t {
-	unsigned long clock_rate;
-	uint64_t avg;
-	uint64_t inst;
-};
-
 struct cpp_device {
 	struct platform_device *pdev;
 	struct msm_sd_subdev msm_sd;
@@ -196,6 +197,8 @@ struct cpp_device {
 	struct msm_cpp_work_t *work;
 	uint32_t fw_version;
 	uint8_t stream_cnt;
+	uint8_t timeout_trial_cnt;
+	uint8_t max_timeout_trial_cnt; /*LGE_CHANGE, QCT patch for cpp timeout - Case01986974, 2015-05-06, ejoon.kim@lge.com*/
 
 	int domain_num;
 	struct iommu_domain *domain;
@@ -203,6 +206,7 @@ struct cpp_device {
 	struct ion_client *client;
 	struct kref refcount;
 	uint32_t num_clk;
+	uint32_t min_clk_rate;
 
 	/* Reusing proven tasklet from msm isp */
 	atomic_t irq_cnt;
@@ -227,5 +231,23 @@ struct cpp_device {
 	struct msm_cpp_buff_queue_info_t *buff_queue;
 	uint32_t num_buffq;
 	struct v4l2_subdev *buf_mgr_subdev;
+
+	uint32_t rd_pntr;
+	uint32_t wr_0_pntr;
+	uint32_t wr_1_pntr;
+	uint32_t wr_2_pntr;
+	uint32_t wr_3_pntr;
+	uint32_t rd_ref_pntr;
+	uint32_t wr_ref_pntr;
+	uint32_t wr_0_meta_data_wr_pntr;
+	uint32_t wr_1_meta_data_wr_pntr;
+	uint32_t wr_2_meta_data_wr_pntr;
+	uint32_t wr_3_meta_data_wr_pntr;
+	uint32_t stripe_base;
+	uint32_t stripe_size;
+	uint32_t stripe_info_offset;
+	uint32_t bus_client;
+	uint32_t bus_idx;
+	uint32_t bus_master_flag;
 };
 #endif /* __MSM_CPP_H__ */

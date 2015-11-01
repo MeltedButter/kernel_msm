@@ -326,15 +326,22 @@ static void audio_send(struct audio_dev *audio)
 	s64 msecs;
 	s64 frames;
 	ktime_t now;
+	unsigned long flags;
 
+	spin_lock_irqsave(&audio->lock, flags);
 	/* audio->substream will be null if we have been closed */
-	if (!audio->substream)
+	if (!audio->substream) {
+		spin_unlock_irqrestore(&audio->lock, flags);
 		return;
+	}
 	/* audio->buffer_pos will be null if we have been stopped */
-	if (!audio->buffer_pos)
+	if (!audio->buffer_pos) {
+		spin_unlock_irqrestore(&audio->lock, flags);
 		return;
+	}
 
 	runtime = audio->substream->runtime;
+	spin_unlock_irqrestore(&audio->lock, flags);
 
 	/* compute number of frames to send */
 	now = ktime_get();
@@ -358,8 +365,21 @@ static void audio_send(struct audio_dev *audio)
 
 	while (frames > 0) {
 		req = audio_req_get(audio);
-		if (!req)
+		spin_lock_irqsave(&audio->lock, flags);
+		/* audio->substream will be null if we have been closed */
+		if (!audio->substream) {
+			spin_unlock_irqrestore(&audio->lock, flags);
+			return;
+		}
+		/* audio->buffer_pos will be null if we have been stopped */
+		if (!audio->buffer_pos) {
+			spin_unlock_irqrestore(&audio->lock, flags);
+			return;
+		}
+		if (!req) {
+			spin_unlock_irqrestore(&audio->lock, flags);
 			break;
+		}
 
 		length = frames_to_bytes(runtime, frames);
 		if (length > IN_EP_MAX_PACKET_SIZE)
@@ -385,6 +405,7 @@ static void audio_send(struct audio_dev *audio)
 		}
 
 		req->length = length;
+		spin_unlock_irqrestore(&audio->lock, flags);
 		ret = usb_ep_queue(audio->in_ep, req, GFP_ATOMIC);
 		if (ret < 0) {
 			pr_err("usb_ep_queue failed ret: %d\n", ret);
@@ -554,6 +575,35 @@ static void audio_disable(struct usb_function *f)
 		audio->audio_ep_enabled = false;
 	}
 }
+
+#ifdef CONFIG_USB_LGE_AUDIO_DOCK
+static void audio_pcm_playback_stop(struct audio_dev *audio);
+static void audio_pcm_playback_start(struct audio_dev *audio);
+
+static void audio_suspend(struct usb_function *f)
+{
+	struct audio_dev	*audio = audio_source_func_to_audio(f);
+
+	pr_debug("audio_suspend\n");
+	audio_pcm_playback_stop(audio);
+	if (audio->audio_ep_enabled) {
+		usb_ep_disable(audio->in_ep);
+		audio->audio_ep_enabled = false;
+	}
+}
+
+static void audio_resume(struct usb_function *f)
+{
+	struct audio_dev	*audio = audio_source_func_to_audio(f);
+
+	pr_debug("audio_resume\n");
+	if (!audio->audio_ep_enabled) {
+		usb_ep_enable(audio->in_ep);
+		audio->audio_ep_enabled = true;
+	}
+	audio_pcm_playback_start(audio);
+}
+#endif
 
 /*-------------------------------------------------------------------------*/
 
@@ -799,6 +849,10 @@ static struct audio_dev _audio_dev = {
 		.set_alt = audio_set_alt,
 		.setup = audio_setup,
 		.disable = audio_disable,
+#ifdef CONFIG_USB_LGE_AUDIO_DOCK
+		.suspend = audio_suspend,
+		.resume = audio_resume,
+#endif
 	},
 	.lock = __SPIN_LOCK_UNLOCKED(_audio_dev.lock),
 	.idle_reqs = LIST_HEAD_INIT(_audio_dev.idle_reqs),

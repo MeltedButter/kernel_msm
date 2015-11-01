@@ -523,6 +523,10 @@ out_list:
 /* slim_remove_device: Remove the effect of slim_add_device() */
 void slim_remove_device(struct slim_device *sbdev)
 {
+	struct slim_controller *ctrl = sbdev->ctrl;
+	mutex_lock(&ctrl->m_ctrl);
+	list_del_init(&sbdev->dev_list);
+	mutex_unlock(&ctrl->m_ctrl);
 	device_unregister(&sbdev->dev);
 }
 EXPORT_SYMBOL_GPL(slim_remove_device);
@@ -1088,7 +1092,7 @@ int slim_xfer_msg(struct slim_controller *ctrl, struct slim_device *sbdev,
 	} else
 		ret = slim_processtxn(ctrl, SLIM_MSG_DEST_LOGICALADDR, mc, ec,
 				SLIM_MSG_MT_CORE, rbuf, wbuf, len, mlen,
-				NULL, sbdev->laddr, NULL);
+				msg->comp, sbdev->laddr, NULL);
 xfer_err:
 	return ret;
 }
@@ -1472,7 +1476,7 @@ EXPORT_SYMBOL_GPL(slim_disconnect_ports);
  * Client will call slim_port_get_xfer_status to get error and/or number of
  * bytes transferred if used asynchronously.
  */
-int slim_port_xfer(struct slim_device *sb, u32 ph, u8 *iobuf, u32 len,
+int slim_port_xfer(struct slim_device *sb, u32 ph, phys_addr_t iobuf, u32 len,
 				struct completion *comp)
 {
 	struct slim_controller *ctrl = sb->ctrl;
@@ -1502,7 +1506,7 @@ EXPORT_SYMBOL_GPL(slim_port_xfer);
  * processed from the multiple transfers.
  */
 enum slim_port_err slim_port_get_xfer_status(struct slim_device *sb, u32 ph,
-			u8 **done_buf, u32 *done_len)
+			phys_addr_t *done_buf, u32 *done_len)
 {
 	struct slim_controller *ctrl = sb->ctrl;
 	u8 pn = SLIM_HDL_TO_PORT(ph);
@@ -1515,7 +1519,7 @@ enum slim_port_err slim_port_get_xfer_status(struct slim_device *sb, u32 ph,
 	 */
 	if (la != SLIM_LA_MANAGER) {
 		if (done_buf)
-			*done_buf = NULL;
+			*done_buf = 0;
 		if (done_len)
 			*done_len = 0;
 		return SLIM_P_NOT_OWNED;
@@ -1630,7 +1634,7 @@ static u32 slim_calc_prrate(struct slim_controller *ctrl, struct slim_ch *prop)
 	bool done = false;
 	enum slim_ch_rate ratefam;
 
-	if (prop->prot >= SLIM_PUSH)
+	if (prop->prot >= SLIM_ASYNC_SMPLX)
 		return 0;
 	if (prop->baser == SLIM_RATE_1HZ) {
 		rate = prop->ratem / 4000;
@@ -1749,10 +1753,8 @@ static int slim_nextdefine_ch(struct slim_device *sb, u8 chan)
 	else if (prop->prot == SLIM_AUTO_ISO) {
 		if (exact)
 			prop->prot = SLIM_HARD_ISO;
-		else {
-			/* Push-Pull not supported for now */
-			return -EPROTONOSUPPORT;
-		}
+		else
+			prop->prot = SLIM_PUSH;
 	}
 	slc->rootexp = exp;
 	slc->seglen = prop->sampleszbits/SLIM_CL_PER_SL;

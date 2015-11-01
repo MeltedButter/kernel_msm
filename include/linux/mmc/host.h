@@ -82,12 +82,12 @@ struct mmc_ios {
 #define MMC_SET_DRIVER_TYPE_A	1
 #define MMC_SET_DRIVER_TYPE_C	2
 #define MMC_SET_DRIVER_TYPE_D	3
-#define MMC_SET_DRIVER_TYPE_4	4		/* eMMC only */
 };
 
 /* states to represent load on the host */
 enum mmc_load {
 	MMC_LOAD_HIGH,
+	MMC_LOAD_INIT,
 	MMC_LOAD_LOW,
 };
 
@@ -147,8 +147,7 @@ struct mmc_host_ops {
 
 	/* The tuning command opcode value is different for SD and eMMC cards */
 	int	(*execute_tuning)(struct mmc_host *host, u32 opcode);
-	int	(*select_drive_strength)(struct mmc_host *host,
-					 int host_drv, int card_drv);
+	int	(*select_drive_strength)(unsigned int max_dtr, int host_drv, int card_drv);
 	void	(*hw_reset)(struct mmc_host *host);
 	void	(*card_event)(struct mmc_host *host);
 	unsigned long (*get_max_frequency)(struct mmc_host *host);
@@ -229,6 +228,26 @@ enum dev_state {
 	DEV_RESUMED,
 };
 
+#ifdef CONFIG_MACH_LGE
+/* LGE_CHANGE
+ * define enumeration for mmc-host-driver-index.
+ * 2014-09-01, Z2G4-BSP-FileSys@lge.com
+ */
+enum mmc_host_driver_index {
+       MMC_HOST_DRIVER_INDEX_MMC0 = 0,
+       MMC_HOST_DRIVER_INDEX_MMC1,
+       MMC_HOST_DRIVER_INDEX_MMC2,
+       MMC_HOST_DRIVER_INDEX_MMC3
+};
+
+enum mmc_sdcc_controller_index {
+       MMC_SDCC_CONTROLLER_INDEX_SDCC1 = 1,
+       MMC_SDCC_CONTROLLER_INDEX_SDCC2,
+       MMC_SDCC_CONTROLLER_INDEX_SDCC3,
+       MMC_SDCC_CONTROLLER_INDEX_SDCC4
+};
+#endif
+
 struct mmc_host {
 	struct device		*parent;
 	struct device		class_dev;
@@ -289,9 +308,9 @@ struct mmc_host {
 #define MMC_CAP_UHS_SDR50	(1 << 17)	/* Host supports UHS SDR50 mode */
 #define MMC_CAP_UHS_SDR104	(1 << 18)	/* Host supports UHS SDR104 mode */
 #define MMC_CAP_UHS_DDR50	(1 << 19)	/* Host supports UHS DDR50 mode */
-#define MMC_CAP_DRIVER_TYPE_A	(1 << 23)	/* Host supports SD Driver Type A (eMMC Type 1) */
-#define MMC_CAP_DRIVER_TYPE_C	(1 << 24)	/* Host supports SD Driver Type C (eMMC Type 2) */
-#define MMC_CAP_DRIVER_TYPE_D	(1 << 25)	/* Host supports SD Driver Type D (eMMC Type 3) */
+#define MMC_CAP_DRIVER_TYPE_A	(1 << 23)	/* Host supports Driver Type A */
+#define MMC_CAP_DRIVER_TYPE_C	(1 << 24)	/* Host supports Driver Type C */
+#define MMC_CAP_DRIVER_TYPE_D	(1 << 25)	/* Host supports Driver Type D */
 #define MMC_CAP_CMD23		(1 << 30)	/* CMD23 supported. */
 #define MMC_CAP_HW_RESET	(1 << 31)	/* Hardware reset */
 
@@ -331,8 +350,7 @@ struct mmc_host {
 #define MMC_CAP2_CORE_PM       (1 << 24)       /* use PM framework */
 #define MMC_CAP2_HS400		(MMC_CAP2_HS400_1_8V | \
 				 MMC_CAP2_HS400_1_2V)
-#define MMC_CAP2_DRIVER_TYPE_4	(1 << 31)	/* Host supports eMMC Driver Type 4 */
-
+#define MMC_CAP2_NONHOTPLUG	(1 << 25)	/*Don't support hotplug*/
 	mmc_pm_flag_t		pm_caps;	/* supported pm features */
 
 	int			clk_requests;	/* internal reference counter */
@@ -460,6 +478,7 @@ struct mmc_host {
 	 * actually disabling the clock from it's source.
 	 */
 	bool			card_clock_off;
+	bool			wakeup_on_idle;
 	unsigned long		private[0] ____cacheline_aligned;
 };
 

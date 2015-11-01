@@ -1673,7 +1673,7 @@ static inline int xhci_link_trb_quirk(struct xhci_hcd *xhci)
 /* xHCI debugging */
 
 /* Maximum debug message length */
-#define DBG_MSG_LEN   128UL
+#define DBG_MSG_LEN   64UL
 
 /* Maximum number of messages */
 #define DBG_MAX_MSG   1024UL
@@ -1909,6 +1909,7 @@ int xhci_cancel_cmd(struct xhci_hcd *xhci, struct xhci_command *command,
 void xhci_ring_ep_doorbell(struct xhci_hcd *xhci, unsigned int slot_id,
 		unsigned int ep_index, unsigned int stream_id);
 union xhci_trb *xhci_find_next_enqueue(struct xhci_ring *ring);
+int xhci_handle_event(struct xhci_hcd *xhci);
 
 /* xHCI roothub code */
 void xhci_set_link_state(struct xhci_hcd *xhci, __le32 __iomem **port_array,

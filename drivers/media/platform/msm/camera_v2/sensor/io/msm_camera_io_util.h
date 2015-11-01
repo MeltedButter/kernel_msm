@@ -15,19 +15,58 @@
 
 #include <linux/regulator/consumer.h>
 #include <linux/gpio.h>
+#include <linux/clk.h>
+#include <linux/slab.h>
+#include <linux/interrupt.h>
 #include <soc/qcom/camera2.h>
 #include <media/msm_cam_sensor.h>
+#include <media/v4l2-ioctl.h>
 
 #define NO_SET_RATE -1
 #define INIT_RATE -2
 
+struct msm_gpio_set_tbl {
+	unsigned gpio;
+	unsigned long flags;
+	uint32_t delay;
+};
+/* LGE_CHANGE, camera stability task, Changed to inline function for RTB logging */
+#ifdef CONFIG_MSM_RTB//CONFIG_LGE_CAMERA_RTB_DEBUG
+static inline void msm_camera_io_w(u32 data, void __iomem *addr)
+{
+	writel_relaxed((data), (addr));
+}
+static inline void msm_camera_io_w_mb(u32 data, void __iomem *addr)
+{
+	wmb();
+	writel_relaxed((data), (addr));
+	wmb();
+}
+static inline u32 msm_camera_io_r(void __iomem *addr)
+{
+	uint32_t data = readl_relaxed(addr);
+	return data;
+}
+static inline u32 msm_camera_io_r_mb(void __iomem *addr)
+{
+	uint32_t data;
+	rmb();
+	data = readl_relaxed(addr);
+	rmb();
+	return data;
+}
+#else
 void msm_camera_io_w(u32 data, void __iomem *addr);
 void msm_camera_io_w_mb(u32 data, void __iomem *addr);
 u32 msm_camera_io_r(void __iomem *addr);
 u32 msm_camera_io_r_mb(void __iomem *addr);
+#endif
+
 void msm_camera_io_dump(void __iomem *addr, int size);
 void msm_camera_io_memcpy(void __iomem *dest_addr,
 		void __iomem *src_addr, u32 len);
+void msm_camera_io_memcpy_mb(void __iomem *dest_addr,
+	void __iomem *src_addr, u32 len);
 int msm_cam_clk_sel_src(struct device *dev, struct msm_cam_clk_info *clk_info,
 		struct msm_cam_clk_info *clk_src_info, int num_clk);
 int msm_cam_clk_enable(struct device *dev, struct msm_cam_clk_info *clk_info,
@@ -54,8 +93,5 @@ int msm_camera_config_single_vreg(struct device *dev,
 
 int msm_camera_request_gpio_table(struct gpio *gpio_tbl, uint8_t size,
 	int gpio_en);
-
-int msm_camera_request_mux_gpio_table(struct device *dev,
-	struct gpio *gpio_tbl, uint8_t size, int gpio_en);
 
 #endif

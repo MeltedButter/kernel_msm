@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -44,6 +44,10 @@
 
 #define TO_SECS(arr)		(arr[0] | (arr[1] << 8) | (arr[2] << 16) | \
 							(arr[3] << 24))
+
+#ifdef CONFIG_LGE_RTC_FAKE_SECS
+static unsigned long rtc_fake_secs;
+#endif
 
 /* Module parameter to control power-on-alarm */
 static bool poweron_alarm;
@@ -102,9 +106,14 @@ qpnp_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	int rc;
 	unsigned long secs, irq_flags;
 	u8 value[4], reg = 0, alarm_enabled = 0, ctrl_reg;
+	u8 rtc_disabled = 0, rtc_ctrl_reg;
 	struct qpnp_rtc *rtc_dd = dev_get_drvdata(dev);
 
 	rtc_tm_to_time(tm, &secs);
+
+#ifdef CONFIG_LGE_RTC_FAKE_SECS
+	secs -= rtc_fake_secs;
+#endif
 
 	value[0] = secs & 0xFF;
 	value[1] = (secs >> 8) & 0xFF;
@@ -152,6 +161,22 @@ qpnp_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	 * write operation
 	 */
 
+	/* Disable RTC H/w before writing on RTC register*/
+	rtc_ctrl_reg = rtc_dd->rtc_ctrl_reg;
+	if (rtc_ctrl_reg & BIT_RTC_ENABLE) {
+		rtc_disabled = 1;
+		rtc_ctrl_reg &= ~BIT_RTC_ENABLE;
+		rc = qpnp_write_wrapper(rtc_dd, &rtc_ctrl_reg,
+				rtc_dd->rtc_base + REG_OFFSET_RTC_CTRL, 1);
+		if (rc) {
+			dev_err(dev,
+				"Disabling of RTC control reg failed"
+					" with error:%d\n", rc);
+			goto rtc_rw_fail;
+		}
+		rtc_dd->rtc_ctrl_reg = rtc_ctrl_reg;
+	}
+
 	/* Clear WDATA[0] */
 	reg = 0x0;
 	rc = qpnp_write_wrapper(rtc_dd, &reg,
@@ -175,6 +200,20 @@ qpnp_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	if (rc) {
 		dev_err(dev, "Write to RTC reg failed\n");
 		goto rtc_rw_fail;
+	}
+
+	/* Enable RTC H/w after writing on RTC register*/
+	if (rtc_disabled) {
+		rtc_ctrl_reg |= BIT_RTC_ENABLE;
+		rc = qpnp_write_wrapper(rtc_dd, &rtc_ctrl_reg,
+				rtc_dd->rtc_base + REG_OFFSET_RTC_CTRL, 1);
+		if (rc) {
+			dev_err(dev,
+				"Enabling of RTC control reg failed"
+					" with error:%d\n", rc);
+			goto rtc_rw_fail;
+		}
+		rtc_dd->rtc_ctrl_reg = rtc_ctrl_reg;
 	}
 
 	if (alarm_enabled) {
@@ -233,7 +272,11 @@ qpnp_rtc_read_time(struct device *dev, struct rtc_time *tm)
 		}
 	}
 
+#ifdef CONFIG_LGE_RTC_FAKE_SECS
+	secs = rtc_fake_secs + TO_SECS(value);
+#else
 	secs = TO_SECS(value);
+#endif
 
 	rtc_time_to_tm(secs, tm);
 
@@ -276,6 +319,10 @@ qpnp_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 		dev_err(dev, "Trying to set alarm in the past\n");
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_LGE_RTC_FAKE_SECS
+	secs -= rtc_fake_secs;
+#endif
 
 	value[0] = secs & 0xFF;
 	value[1] = (secs >> 8) & 0xFF;
@@ -330,7 +377,11 @@ qpnp_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 		return rc;
 	}
 
+#ifdef CONFIG_LGE_RTC_FAKE_SECS
+	secs = rtc_fake_secs + TO_SECS(value);
+#else
 	secs = TO_SECS(value);
+#endif
 	rtc_time_to_tm(secs, &alarm->time);
 
 	rc = rtc_valid_tm(&alarm->time);
@@ -439,6 +490,10 @@ static int qpnp_rtc_probe(struct spmi_device *spmi)
 	struct resource *resource;
 	struct spmi_resource *spmi_resource;
 
+#ifdef CONFIG_LGE_RTC_FAKE_SECS
+	rtc_fake_secs = mktime(2015, 1, 1, 0, 0, 0);
+#endif
+
 	rtc_dd = devm_kzalloc(&spmi->dev, sizeof(*rtc_dd), GFP_KERNEL);
 	if (rtc_dd == NULL) {
 		dev_err(&spmi->dev, "Unable to allocate memory!\n");
@@ -532,8 +587,15 @@ static int qpnp_rtc_probe(struct spmi_device *spmi)
 		goto fail_rtc_enable;
 	}
 
+	rc = qpnp_read_wrapper(rtc_dd, &rtc_dd->alarm_ctrl_reg1,
+				rtc_dd->alarm_base + REG_OFFSET_ALARM_CTRL1, 1);
+	if (rc) {
+		dev_err(&spmi->dev,
+			"Read from  Alarm control reg failed\n");
+		goto fail_rtc_enable;
+	}
 	/* Enable abort enable feature */
-	rtc_dd->alarm_ctrl_reg1 = BIT_RTC_ABORT_ENABLE;
+	rtc_dd->alarm_ctrl_reg1 |= BIT_RTC_ABORT_ENABLE;
 	rc = qpnp_write_wrapper(rtc_dd, &rtc_dd->alarm_ctrl_reg1,
 			rtc_dd->alarm_base + REG_OFFSET_ALARM_CTRL1, 1);
 	if (rc) {

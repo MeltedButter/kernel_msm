@@ -347,11 +347,15 @@ static inline int ip6_forward_finish(struct sk_buff *skb)
 
 static bool ip6_pkt_too_big(const struct sk_buff *skb, unsigned int mtu)
 {
-	if (skb->len <= mtu || skb->local_df)
+	if (skb->len <= mtu)
 		return false;
 
+	/* ipv6 conntrack defrag sets max_frag_size + local_df */
 	if (IP6CB(skb)->frag_max_size && IP6CB(skb)->frag_max_size > mtu)
 		return true;
+
+	if (skb->local_df)
+		return false;
 
 	if (skb_is_gso(skb) && skb_gso_network_seglen(skb) <= mtu)
 		return false;
@@ -1363,8 +1367,20 @@ alloc_new_skb:
 			/*
 			 *	Fill in the control structures
 			 */
-			skb->ip_summed = CHECKSUM_NONE;
-			skb->csum = 0;
+
+			/* offload UDP checksum in case the packet is not
+			 * a fragment (length <= mtu && transhdrlen) and the
+			 * device supports it in its features.
+			 */
+			if ((rt->dst.dev->features &
+				NETIF_F_IPV6_UDP_CSUM) &&
+				(length <= mtu) && transhdrlen &&
+				(sk->sk_protocol == IPPROTO_UDP)) {
+				skb->ip_summed = CHECKSUM_PARTIAL;
+			} else {
+				skb->ip_summed = CHECKSUM_NONE;
+				skb->csum = 0;
+			}
 			/* reserve for fragmentation and ipsec header */
 			skb_reserve(skb, hh_len + sizeof(struct frag_hdr) +
 				    dst_exthdrlen);

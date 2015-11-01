@@ -12,6 +12,7 @@
 #ifndef __Q6AFE_V2_H__
 #define __Q6AFE_V2_H__
 #include <sound/apr_audio-v2.h>
+#include <linux/qdsp6v2/rtac.h>
 
 #define IN			0x000
 #define OUT			0x001
@@ -89,6 +90,7 @@ enum {
 	IDX_SPDIF_RX = 47,
 	IDX_GLOBAL_CFG,
 	IDX_AUDIO_PORT_ID_I2S_RX,
+	IDX_AFE_PORT_ID_SECONDARY_MI2S_RX_SD1,
 	AFE_MAX_PORTS
 };
 
@@ -143,18 +145,70 @@ struct aanc_data {
 	uint32_t aanc_tx_port_sample_rate;
 };
 
+#ifdef CONFIG_SND_TI_SPK_PROT_OPALUM
+/* be got spk temp data from ospl in ADSP */
+#define AFE_DATA_EVENT_STATUS 0xF0012B03
+
+#define RX_MODULE		 0x00A1AF00
+#define TX_MODULE		 0x00A1BF00
+#define EXCURSION_DATA	 0x00A1AF06
+#define TEMPERATURE_DATA 0x00A1AF07
+
+struct afe_custom_opalum_set_config_t {
+    struct apr_hdr hdr;
+    struct afe_port_cmd_set_param_v2 param;
+    struct afe_port_param_data_v2 data;
+} __packed;
+
+struct afe_custom_opalum_get_config_t {
+	struct apr_hdr                    hdr;
+	struct afe_port_cmd_get_param_v2  param;
+	struct afe_port_param_data_v2     data;
+} __packed;
+
+struct opalum_single_data_ctrl_t {
+    int32_t value;
+};
+struct opalum_dual_data_ctrl_t {
+    int32_t      data1;
+    int32_t      data2;
+    #ifdef CONFIG_SND_SOC_SPKINFO
+    int32_t      data3;
+    #endif
+};
+
+/* Payload struct for getting temperature calibration data */
+struct opalum_temp_calib_data_t {
+    int acc;
+    int count;
+};
+
+int opalum_afe_set_param(int command);
+int opalum_afe_get_param(int command);
+
+struct opalum_external_config_t {
+	u32			total_size;
+	u32			chunk_size;
+	int				done;
+    u32             config;
+	//const char* 	config;
+};
+
+int opalum_afe_send_config(int rx_tx, const char* cfg_strings);
+
+
+#endif  // CONFIG_SND_TI_SPK_PROT_OPALUM
+
 int afe_open(u16 port_id, union afe_port_config *afe_config, int rate);
 int afe_close(int port_id);
 int afe_loopback(u16 enable, u16 rx_port, u16 tx_port);
 int afe_sidetone(u16 tx_port_id, u16 rx_port_id, u16 enable, uint16_t gain);
 int afe_loopback_gain(u16 port_id, u16 volume);
-int afe_set_lpass_port_ec_ref_16k(u16 port_id, u16 enable);
 int afe_validate_port(u16 port_id);
 int afe_get_port_index(u16 port_id);
 int afe_start_pseudo_port(u16 port_id);
 int afe_stop_pseudo_port(u16 port_id);
 uint32_t afe_req_mmap_handle(struct afe_audio_client *ac);
-int afe_unmap_cal_blocks(void);
 int afe_memory_map(phys_addr_t dma_addr_p, u32 dma_buf_sz,
 		struct afe_audio_client *ac);
 int afe_cmd_memory_map(phys_addr_t dma_addr_p, u32 dma_buf_sz);
@@ -198,8 +252,12 @@ int afe_convert_virtual_to_portid(u16 port_id);
 int afe_pseudo_port_start_nowait(u16 port_id);
 int afe_pseudo_port_stop_nowait(u16 port_id);
 int afe_set_lpass_clock(u16 port_id, struct afe_clk_cfg *cfg);
+int afe_set_digital_codec_core_clock(u16 port_id,
+			struct afe_digital_clk_cfg *cfg);
 int afe_set_lpass_internal_digital_codec_clock(u16 port_id,
 				struct afe_digital_clk_cfg *cfg);
+int afe_enable_lpass_core_shared_clock(u16 port_id, u32 enable);
+
 int q6afe_check_osr_clk_freq(u32 freq);
 
 int afe_send_spdif_clk_cfg(struct afe_param_id_spdif_clk_cfg *cfg,
@@ -219,4 +277,8 @@ void afe_clear_config(enum afe_config_type config);
 bool afe_has_config(enum afe_config_type config);
 
 void afe_set_aanc_info(struct aanc_data *aanc_info);
+int afe_port_group_set_param(u16 *port_id, int channel_count);
+int afe_port_group_enable(u16 enable);
+int afe_unmap_rtac_block(uint32_t *mem_map_handle);
+int afe_map_rtac_block(struct rtac_cal_block_data *cal_block);
 #endif /* __Q6AFE_V2_H__ */

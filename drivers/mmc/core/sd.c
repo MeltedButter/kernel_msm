@@ -11,6 +11,7 @@
  */
 
 #include <linux/err.h>
+#include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/stat.h>
 
@@ -19,6 +20,7 @@
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/sd.h>
 #include <linux/pm_runtime.h>
+#include <linux/mmc/slot-gpio.h>
 
 #include "core.h"
 #include "bus.h"
@@ -49,6 +51,13 @@ static const unsigned int tacc_exp[] = {
 static const unsigned int tacc_mant[] = {
 	0,	10,	12,	13,	15,	20,	25,	30,
 	35,	40,	45,	50,	55,	60,	70,	80,
+};
+
+static const unsigned int sd_au_size[] = {
+	0,		SZ_16K / 512,		SZ_32K / 512,	SZ_64K / 512,
+	SZ_128K / 512,	SZ_256K / 512,		SZ_512K / 512,	SZ_1M / 512,
+	SZ_2M / 512,	SZ_4M / 512,		SZ_8M / 512,	(SZ_8M + SZ_4M) / 512,
+	SZ_16M / 512,	(SZ_16M + SZ_8M) / 512,	SZ_32M / 512,	SZ_64M / 512,
 };
 
 #define UNSTUFF_BITS(resp,start,size)					\
@@ -221,7 +230,7 @@ static int mmc_decode_scr(struct mmc_card *card)
  */
 static int mmc_read_ssr(struct mmc_card *card)
 {
-	unsigned int au, es, et, eo, spd;
+	unsigned int au, es, et, eo;
 	int err, i;
 	u32 *ssr;
 
@@ -251,27 +260,21 @@ static int mmc_read_ssr(struct mmc_card *card)
 	 * bitfield positions accordingly.
 	 */
 	au = UNSTUFF_BITS(ssr, 428 - 384, 4);
-	if (au > 0 && au <= 9) {
-		card->ssr.au = 1 << (au + 4);
-		es = UNSTUFF_BITS(ssr, 408 - 384, 16);
-		et = UNSTUFF_BITS(ssr, 402 - 384, 6);
-		eo = UNSTUFF_BITS(ssr, 400 - 384, 2);
-		if (es && et) {
-			card->ssr.erase_timeout = (et * 1000) / es;
-			card->ssr.erase_offset = eo * 1000;
+	if (au) {
+		if (au <= 9 || card->scr.sda_spec3) {
+			card->ssr.au = sd_au_size[au];
+			es = UNSTUFF_BITS(ssr, 408 - 384, 16);
+			et = UNSTUFF_BITS(ssr, 402 - 384, 6);
+			if (es && et) {
+				eo = UNSTUFF_BITS(ssr, 400 - 384, 2);
+				card->ssr.erase_timeout = (et * 1000) / es;
+				card->ssr.erase_offset = eo * 1000;
+			}
+		} else {
+			pr_warning("%s: SD Status: Invalid Allocation Unit size.\n",
+				   mmc_hostname(card->host));
 		}
-	} else {
-		pr_warning("%s: SD Status: Invalid Allocation Unit "
-			"size.\n", mmc_hostname(card->host));
 	}
-
-	spd = UNSTUFF_BITS(ssr, 440 - 384, 8);
-	if (spd < 4)
-		card->ssr.speed_class = spd * 2;
-	else if (spd == 4)
-		card->ssr.speed_class = 10;
-
-	card->ssr.uhs_speed_grade = UNSTUFF_BITS(ssr, 396 - 384, 4);
 out:
 	kfree(ssr);
 	return err;
@@ -433,9 +436,9 @@ static int sd_select_driver_type(struct mmc_card *card, u8 *status)
 	 * return what is possible given the options
 	 */
 	mmc_host_clk_hold(card->host);
-	drive_strength = card->host->ops->select_drive_strength(card->host,
-								host_drv_type,
-								card_drv_type);
+	drive_strength = card->host->ops->select_drive_strength(
+		card->sw_caps.uhs_max_dtr,
+		host_drv_type, card_drv_type);
 	mmc_host_clk_release(card->host);
 
 	err = mmc_sd_switch(card, 1, 2, drive_strength, status);
@@ -762,8 +765,6 @@ MMC_DEV_ATTR(manfid, "0x%06x\n", card->cid.manfid);
 MMC_DEV_ATTR(name, "%s\n", card->cid.prod_name);
 MMC_DEV_ATTR(oemid, "0x%04x\n", card->cid.oemid);
 MMC_DEV_ATTR(serial, "0x%08x\n", card->cid.serial);
-MMC_DEV_ATTR(speed_class, "%d\n", card->ssr.speed_class);
-MMC_DEV_ATTR(uhs_speed_grade, "%d\n", card->ssr.uhs_speed_grade);
 
 
 static struct attribute *sd_std_attrs[] = {
@@ -779,8 +780,6 @@ static struct attribute *sd_std_attrs[] = {
 	&dev_attr_name.attr,
 	&dev_attr_oemid.attr,
 	&dev_attr_serial.attr,
-	&dev_attr_speed_class.attr,
-	&dev_attr_uhs_speed_grade.attr,
 	NULL,
 };
 
@@ -1024,6 +1023,17 @@ static int mmc_sd_init_card(struct mmc_host *host, u32 ocr,
 	BUG_ON(!host);
 	WARN_ON(!host->claimed);
 
+	#ifdef CONFIG_MACH_LGE
+	/* LGE_UPDATE
+	 * When uSD is not inserted, return proper error-value.
+	 * 2014-09-01, Z2G4-BSP-FileSys@lge.com
+	 */
+	if (!mmc_gpio_get_cd(host)) {
+		printk(KERN_INFO "[LGE][MMC][%-18s( )] sd-no-exist. skip next\n", __func__);
+		err = -ENOMEDIUM;
+		return err;
+	}
+	#endif
 	err = mmc_sd_get_cid(host, ocr, cid, &rocr);
 	if (err)
 		return err;
@@ -1129,11 +1139,11 @@ static void mmc_sd_remove(struct mmc_host *host)
 	BUG_ON(!host);
 	BUG_ON(!host->card);
 
+	mmc_exit_clk_scaling(host);
 	mmc_remove_card(host->card);
 
 	mmc_claim_host(host);
 	host->card = NULL;
-	mmc_exit_clk_scaling(host);
 	mmc_release_host(host);
 }
 
@@ -1249,6 +1259,17 @@ static int mmc_sd_resume(struct mmc_host *host)
 	while (retries) {
 		err = mmc_sd_init_card(host, host->ocr, host->card);
 
+		#ifdef CONFIG_MACH_LGE
+			/* LGE_CHANGE
+			* Skip below When ENOMEDIUM
+			* 2014-09-01, Z2G4-BSP-FileSys@lge.com
+			*/
+			if (err == -ENOMEDIUM) {
+				printk(KERN_INFO "[LGE][MMC][%-18s( )] error:ENOMEDIUM\n", __func__);
+				break;
+			}
+		#endif
+
 		if (err) {
 			printk(KERN_ERR "%s: Re-init card rc = %d (retries = %d)\n",
 			       mmc_hostname(host), err, retries);
@@ -1335,7 +1356,10 @@ int mmc_attach_sd(struct mmc_host *host)
 #ifdef CONFIG_MMC_PARANOID_SD_INIT
 	int retries;
 #endif
-
+#ifdef CONFIG_MACH_LGE
+	int i, st_err = 0;
+	u32 status;
+#endif
 	BUG_ON(!host);
 	WARN_ON(!host->claimed);
 
@@ -1392,8 +1416,25 @@ int mmc_attach_sd(struct mmc_host *host)
 	 */
 #ifdef CONFIG_MMC_PARANOID_SD_INIT
 	retries = 5;
-	while (retries) {
+	/*
+	 * Some bad cards may take a long time to init, give preference to
+	 * suspend in those cases.
+	 */
+	while (retries && !host->rescan_disable) {
 		err = mmc_sd_init_card(host, host->ocr, NULL);
+
+		#ifdef CONFIG_MACH_LGE
+		/* LGE_CHANGE
+		* Skip below When ENOMEDIUM
+		* 2014-09-01, Z2G4-BSP-FileSys@lge.com
+		*/
+		if (err == -ENOMEDIUM) {
+			printk(KERN_INFO "[LGE][MMC][%-18s( )] error:ENOMEDIUM\n", __func__);
+			retries=0;
+			break;
+		}
+		#endif
+
 		if (err) {
 			retries--;
 			mmc_power_off(host);
@@ -1410,12 +1451,25 @@ int mmc_attach_sd(struct mmc_host *host)
 		       mmc_hostname(host), err);
 		goto err;
 	}
+
+	if (host->rescan_disable)
+		goto err;
 #else
 	err = mmc_sd_init_card(host, host->ocr, NULL);
 	if (err)
 		goto err;
 #endif
 
+#ifdef CONFIG_MACH_LGE
+	if(host->card && host){
+	  for(i = 0 ; i < 5 ; i++){
+	    if(!strcmp(mmc_hostname(host), "mmc1")){
+	      st_err = mmc_send_status(host->card, &status);
+	      if(st_err) printk(KERN_INFO "[LGE][%-18s( )] Fail to get card status(CMD13), Err no : %d)\n", __func__, st_err);
+	    }
+	  }
+	}
+#endif
 	mmc_release_host(host);
 	err = mmc_add_card(host->card);
 	mmc_claim_host(host);
@@ -1433,9 +1487,9 @@ remove_card:
 	mmc_claim_host(host);
 err:
 	mmc_detach_bus(host);
-
-	pr_err("%s: error %d whilst initialising SD card\n",
-		mmc_hostname(host), err);
+	if (err)
+		pr_err("%s: error %d whilst initialising SD card: rescan: %d\n",
+		       mmc_hostname(host), err, host->rescan_disable);
 
 	return err;
 }

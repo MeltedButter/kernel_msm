@@ -21,6 +21,16 @@ config FB_MSM_MDSS_HDMI_MHL_SII8334
 	  MHL (Mobile High-Definition Link) technology
 	  uses USB connector to output HDMI content
 
+config FB_MSM_MDSS_MHL3
+	depends on FB_MSM_MDSS_HDMI_PANEL
+	bool "MHL3 SII8620 Support"
+	default n
+	---help---
+	  Support the SiliconImage 8620 MHL Tx transmitter that uses
+	  USB connector to output HDMI content. Transmitter is an
+	  i2c device acting as an HDMI to MHL bridge. Chip supports
+	  MHL 3.0 standard.
+
 config FB_MSM_MDSS_DSI_CTRL_STATUS
 	tristate "DSI controller status check feature"
 	---help---
@@ -43,3 +53,68 @@ config FB_MSM_MDSS_MDP3
 	---help---
 	The MDP3 provides support for an older version display controller
 	included in latest display sub-system, known as MDSS.
+
+config LGE_MIPI_P1_INCELL_QHD_CMD_PANEL
+	bool "LGE_MIPI_P1_INCELL_QHD_CMD_PANEL"
+	default n
+	help
+	  if you say yes here you get support for the JDI Incell Panel.
+
+config LGE_P1_DSV
+	bool "P1_DSV Power Management chip"
+	default n
+	select MACH_LGE
+	help
+	  if you say yes here you get support for the DW series of Power Management chips.
+
+config FB_MSM_MDSS_XLOG_DEBUG
+	depends on FB_MSM_MDSS
+	bool "Enable MDSS debugging"
+	---help---
+	The MDSS debugging provides support to enable display debugging
+	features to: Dump MDSS registers during driver errors, panic
+	driver during fatal errors and enable some display-driver logging
+	into an internal buffer (this avoids logging overhead).
+
+config LGE_LCD_TUNING
+       bool "Enable sysfs for LCD TUNING"
+       default n
+
+config LGE_LCD_OFF_DIMMING
+	bool "Enable LCD DIMMING for FOTA"
+	depends on MACH_LGE
+	default n
+	---help---
+	Support for LCD DIMMING (for FOTA)
+
+
+config LGE_SP_MIRRORING_CTRL_BL
+	bool "SP_MIRRORING_CTRL_BL"
+	default n
+	select MACH_LGE
+	help
+	  if you say yes here you get support for sp mirroring backlight control
+
+config LGE_PARTIAL_UPDATE
+     bool "Enable partail update"
+     default n
+
+config LGE_P1_SRE_SUPPORTED
+	bool "LGE_P1_SRE_SUPPORTED"
+	default n
+	help
+	  if you say yes here you get support for Display Driver IC SRE function.
+
+config LGE_CAM_PREVIEW_TUNE
+    bool "Enable LGE_CAM_PREVIEW_TUNE"
+    default n
+
+config LGE_BLMAP_STORE_MODE
+    bool "Enable LGE_BLMAP_STORE_MODE"
+    default n
+
+config LGE_VSYNC_SKIP
+    bool "MDSS VSYNC Skip scheme"
+    default n
+    ---help---
+    This feature provides VSYNC skip scheme.

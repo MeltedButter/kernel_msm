@@ -64,13 +64,13 @@ config SND_SOC_ALL_CODECS
 	select SND_SOC_STA529 if I2C
 	select SND_SOC_STAC9766 if SND_SOC_AC97_BUS
 	select SND_SOC_TAS5086 if I2C
+	select SND_SOC_TAS2552 if I2C
 	select SND_SOC_TLV320AIC23 if I2C
 	select SND_SOC_TLV320AIC26 if SPI_MASTER
 	select SND_SOC_TLV320AIC32X4 if I2C
 	select SND_SOC_TLV320AIC3X if I2C
 	select SND_SOC_TPA6130A2 if I2C
 	select SND_SOC_TLV320DAC33 if I2C
-	select SND_SOC_TFA9890 if I2C
 	select SND_SOC_TWL4030 if TWL4030_CORE
 	select SND_SOC_TWL6040 if TWL6040_CORE
 	select SND_SOC_UDA134X
@@ -100,7 +100,7 @@ config SND_SOC_ALL_CODECS
 	select SND_SOC_WM8782
 	select SND_SOC_WM8804 if SND_SOC_I2C_AND_SPI
 	select SND_SOC_WM8900 if I2C
-	select SND_SOC_WM8903 if I2C && GENERIC_HARDIRQS
+	select SND_SOC_WM8903 if I2C
 	select SND_SOC_WM8904 if I2C
 	select SND_SOC_WM8940 if I2C
 	select SND_SOC_WM8955 if I2C
@@ -124,8 +124,6 @@ config SND_SOC_ALL_CODECS
 	select SND_SOC_WM9705 if SND_SOC_AC97_BUS
 	select SND_SOC_WM9712 if SND_SOC_AC97_BUS
 	select SND_SOC_WM9713 if SND_SOC_AC97_BUS
-	select SND_SOC_TPA6165A2 if I2C
-	select SND_SOC_FSA8500 if I2C
         help
           Normally ASoC codec drivers are only built if a machine driver which
           uses them is also built since they are only usable with a machine
@@ -384,6 +382,9 @@ config SND_SOC_WCD_CPE
 	tristate
 	default y if SND_SOC_WCD9330=y
 
+config SND_SOC_MSM8909_WCD
+	tristate
+
 config SND_SOC_WL1273
 	tristate
 
@@ -534,9 +535,6 @@ config SND_SOC_WM9712
 config SND_SOC_WM9713
 	tristate
 
-config SND_SOC_TFA9890
-	tristate
-
 # Amp
 config SND_SOC_LM4857
 	tristate
@@ -556,15 +554,30 @@ config SND_SOC_TPA6130A2
 config SND_SOC_MSM_STUB
 	tristate
 
+config SND_SOC_TAS2552
+	tristate "tps2552 boost amp"
+	depends on MACH_LGE
+	default n
 config SND_SOC_MSM_HDMI_CODEC_RX
 	bool "HDMI Audio Playback"
-	depends on FB_MSM_MDSS_HDMI_PANEL && (SND_SOC_MSM8974 || SND_SOC_APQ8084 || SND_SOC_MPQ8092)
+	depends on FB_MSM_MDSS_HDMI_PANEL && (SND_SOC_MSM8974 || SND_SOC_APQ8084 || SND_SOC_MSM8994)
 	help
 	HDMI audio drivers should be built only if the platform
         supports hdmi panel.
-
-config SND_SOC_TPA6165A2
-	tristate
-
-config SND_SOC_FSA8500
-	tristate
+config SND_SOC_SPKINFO
+	bool "spk info"
+	default n
+	depends on SND_SOC_TAS2552
+	help
+	Get spk protection info(temp, excur modeling) when is playing music.
+config SND_SOC_DYBOOST
+	bool "dynamic boost"
+	default n
+	depends on SND_SOC_TAS2552
+	help
+	apply dynamic boost(above pcm 3v) not to use hw boost(apt 1,7)
+config SND_LGE_HIDDEN_AUX
+        bool "hidden aux scenario"
+        default n
+        help
+        apply hidden aux scenario (no icon and device routing)

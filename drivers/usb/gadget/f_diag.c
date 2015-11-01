@@ -2,7 +2,7 @@
  * Diag Function Device - Route ARM9 and ARM11 DIAG messages
  * between HOST and DEVICE.
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2008-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2008-2015, The Linux Foundation. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -17,16 +17,11 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/kref.h>
 #include <linux/platform_device.h>
 #include <linux/ratelimit.h>
 
-#include <mach/usbdiag.h>
-
-#ifdef CONFIG_DIAG_OVER_TTY
-#include <mach/tty_diag.h>
-#include <linux/diagchar.h>
-#endif
-
+#include <linux/usb/usbdiag.h>
 #include <linux/usb/composite.h>
 #include <linux/usb/gadget.h>
 #include <linux/workqueue.h>
@@ -161,6 +156,7 @@ struct diag_context {
 	struct usb_composite_dev *cdev;
 	int (*update_pid_and_serial_num)(uint32_t, const char *);
 	struct usb_diag_ch *ch;
+	struct kref kref;
 
 	/* pkt counters */
 	unsigned long dpkts_tolaptop;
@@ -172,32 +168,20 @@ struct diag_context {
 };
 
 static struct list_head diag_dev_list;
-static unsigned int diag_ch_index;
-
-#define MAX_DIAG_PORTS          2
-static struct usb_string diag_string_defs[MAX_DIAG_PORTS+1];
-
-static struct usb_gadget_strings diag_string_table = {
-	.language =             0x0409, /* en-us */
-	.strings =              diag_string_defs,
-};
-
-static struct usb_gadget_strings *diag_strings[] = {
-	&diag_string_table,
-	NULL,
-};
-
-#ifdef CONFIG_DIAG_OVER_TTY
-struct legacy_dev {
-	int   logging_mode_tty;
-	int   close_olddev;
-	unsigned int major;
-};
-#endif
 
 static inline struct diag_context *func_to_diag(struct usb_function *f)
 {
 	return container_of(f, struct diag_context, function);
+}
+
+/* Called with ctxt->lock held; i.e. only use with kref_put_spinlock_irqsave */
+static void diag_context_release(struct kref *kref)
+{
+	struct diag_context *ctxt =
+		container_of(kref, struct diag_context, kref);
+
+	spin_unlock(&ctxt->lock);
+	kfree(ctxt);
 }
 
 static void diag_update_pid_and_serial_num(struct diag_context *ctxt)
@@ -256,6 +240,8 @@ static void diag_write_complete(struct usb_ep *ep,
 			/* Queue zero length packet */
 			if (!usb_ep_queue(ctxt->in, req, GFP_ATOMIC))
 				return;
+		} else {
+			ctxt->dpkts_tolaptop++;
 		}
 	}
 
@@ -269,6 +255,9 @@ static void diag_write_complete(struct usb_ep *ep,
 
 	if (ctxt->ch && ctxt->ch->notify)
 		ctxt->ch->notify(ctxt->ch->priv, USB_DIAG_WRITE_DONE, d_req);
+
+	kref_put_spinlock_irqsave(&ctxt->kref, diag_context_release,
+			&ctxt->lock);
 }
 
 static void diag_read_complete(struct usb_ep *ep,
@@ -289,6 +278,9 @@ static void diag_read_complete(struct usb_ep *ep,
 
 	if (ctxt->ch && ctxt->ch->notify)
 		ctxt->ch->notify(ctxt->ch->priv, USB_DIAG_READ_DONE, d_req);
+
+	kref_put_spinlock_irqsave(&ctxt->kref, diag_context_release,
+			&ctxt->lock);
 }
 
 /**
@@ -308,15 +300,7 @@ struct usb_diag_ch *usb_diag_open(const char *name, void *priv,
 	struct usb_diag_ch *ch;
 	unsigned long flags;
 	int found = 0;
-#ifdef CONFIG_DIAG_OVER_TTY
-	if (priv == NULL) {
-		pr_err("usb_diag_open can not open properly!\n");
-		return ERR_PTR(-ENODEV);
-	}
 
-	if (((struct legacy_dev *)priv)->logging_mode_tty == TTY_MODE)
-		return tty_diag_channel_open(name, priv, notify);
-#endif
 	spin_lock_irqsave(&ch_lock, flags);
 	/* Check if we already have a channel with this name */
 	list_for_each_entry(ch, &usb_diag_ch_list, list) {
@@ -357,30 +341,6 @@ void usb_diag_close(struct usb_diag_ch *ch)
 	struct diag_context *dev = NULL;
 	unsigned long flags;
 
-#ifdef CONFIG_DIAG_OVER_TTY
-	void *priv = ch->priv;
-	int close_olddev;
-	int logging_mode_tty;
-
-	if (priv == NULL) {
-		pr_err("usb_diag_close can not close properly!\n");
-		return;
-	}
-	close_olddev  = ((struct legacy_dev *)priv)->close_olddev;
-	logging_mode_tty = ((struct legacy_dev *)priv)->logging_mode_tty;
-	if (close_olddev == CLOSE_USB) {
-		goto usb_close;
-	} else if (close_olddev == CLOSE_TTY) {
-		tty_diag_channel_close(ch);
-		return;
-	} else {
-		if (logging_mode_tty == TTY_MODE) {
-			tty_diag_channel_close(ch);
-			return;
-		}
-	}
-usb_close:
-#endif
 	spin_lock_irqsave(&ch_lock, flags);
 	ch->priv = NULL;
 	ch->notify = NULL;
@@ -392,7 +352,6 @@ usb_close:
 	kfree(ch);
 
 	spin_unlock_irqrestore(&ch_lock, flags);
-
 }
 EXPORT_SYMBOL(usb_diag_close);
 
@@ -432,17 +391,6 @@ int usb_diag_alloc_req(struct usb_diag_ch *ch, int n_write, int n_read)
 	int i;
 	unsigned long flags;
 
-#ifdef CONFIG_DIAG_OVER_TTY
-	void *priv = ch->priv;
-
-	if (priv == NULL) {
-		pr_err("usb_diag_alloc_req  can not alloc properly!\n");
-		return -ENODEV;
-	}
-
-	if (((struct legacy_dev *)priv)->logging_mode_tty == TTY_MODE)
-		return 0;
-#endif
 	if (!ctxt)
 		return -ENODEV;
 
@@ -497,18 +445,6 @@ int usb_diag_read(struct usb_diag_ch *ch, struct diag_request *d_req)
 	struct usb_ep *out;
 	static DEFINE_RATELIMIT_STATE(rl, 10*HZ, 1);
 
-#ifdef CONFIG_DIAG_OVER_TTY
-	struct legacy_dev *priv = (struct legacy_dev *)ch->priv;
-	if (priv == NULL) {
-		pr_err("usb_diag_read can not read properly! name=%s\n",
-			ch->name);
-		return -ENODEV;
-	}
-
-	if (priv->logging_mode_tty == TTY_MODE)
-		return tty_diag_channel_read(ch, d_req);
-#endif
-
 	if (!ctxt)
 		return -ENODEV;
 
@@ -529,6 +465,7 @@ int usb_diag_read(struct usb_diag_ch *ch, struct diag_request *d_req)
 
 	req = list_first_entry(&ctxt->read_pool, struct usb_request, list);
 	list_del(&req->list);
+	kref_get(&ctxt->kref); /* put called in complete callback */
 	spin_unlock_irqrestore(&ctxt->lock, flags);
 
 	req->buf = d_req->buf;
@@ -538,6 +475,8 @@ int usb_diag_read(struct usb_diag_ch *ch, struct diag_request *d_req)
 	/* make sure context is still valid after releasing lock */
 	if (ctxt != ch->priv_usb) {
 		usb_ep_free_request(out, req);
+		kref_put_spinlock_irqsave(&ctxt->kref, diag_context_release,
+				&ctxt->lock);
 		return -EIO;
 	}
 
@@ -545,11 +484,16 @@ int usb_diag_read(struct usb_diag_ch *ch, struct diag_request *d_req)
 		/* If error add the link to linked list again*/
 		spin_lock_irqsave(&ctxt->lock, flags);
 		list_add_tail(&req->list, &ctxt->read_pool);
-		spin_unlock_irqrestore(&ctxt->lock, flags);
 		/* 1 error message for every 10 sec */
 		if (__ratelimit(&rl))
 			ERROR(ctxt->cdev, "%s: cannot queue"
 				" read request\n", __func__);
+
+		if (kref_put(&ctxt->kref, diag_context_release))
+			/* diag_context_release called spin_unlock already */
+			local_irq_restore(flags);
+		else
+			spin_unlock_irqrestore(&ctxt->lock, flags);
 		return -EIO;
 	}
 
@@ -578,16 +522,6 @@ int usb_diag_write(struct usb_diag_ch *ch, struct diag_request *d_req)
 	struct usb_ep *in;
 	static DEFINE_RATELIMIT_STATE(rl, 10*HZ, 1);
 
-#ifdef CONFIG_DIAG_OVER_TTY
-	void *priv = ch->priv;
-	if (priv == NULL) {
-		pr_err("usb_diag_write can not write properly!\n");
-		return -ENODEV;
-	}
-
-	if (((struct legacy_dev *)priv)->logging_mode_tty == TTY_MODE)
-		return tty_diag_channel_write(ch, d_req);
-#endif
 	if (!ctxt)
 		return -ENODEV;
 
@@ -608,6 +542,7 @@ int usb_diag_write(struct usb_diag_ch *ch, struct diag_request *d_req)
 
 	req = list_first_entry(&ctxt->write_pool, struct usb_request, list);
 	list_del(&req->list);
+	kref_get(&ctxt->kref); /* put called in complete callback */
 	spin_unlock_irqrestore(&ctxt->lock, flags);
 
 	req->buf = d_req->buf;
@@ -617,23 +552,35 @@ int usb_diag_write(struct usb_diag_ch *ch, struct diag_request *d_req)
 	/* make sure context is still valid after releasing lock */
 	if (ctxt != ch->priv_usb) {
 		usb_ep_free_request(in, req);
+		kref_put_spinlock_irqsave(&ctxt->kref, diag_context_release,
+				&ctxt->lock);
 		return -EIO;
 	}
 
+	ctxt->dpkts_tolaptop_pending++;
 	if (usb_ep_queue(in, req, GFP_ATOMIC)) {
 		/* If error add the link to linked list again*/
 		spin_lock_irqsave(&ctxt->lock, flags);
 		list_add_tail(&req->list, &ctxt->write_pool);
-		spin_unlock_irqrestore(&ctxt->lock, flags);
+		ctxt->dpkts_tolaptop_pending--;
 		/* 1 error message for every 10 sec */
 		if (__ratelimit(&rl))
 			ERROR(ctxt->cdev, "%s: cannot queue"
 				" read request\n", __func__);
+
+		if (kref_put(&ctxt->kref, diag_context_release))
+			/* diag_context_release called spin_unlock already */
+			local_irq_restore(flags);
+		else
+			spin_unlock_irqrestore(&ctxt->lock, flags);
 		return -EIO;
 	}
 
-	ctxt->dpkts_tolaptop++;
-	ctxt->dpkts_tolaptop_pending++;
+	/*
+	 * It's possible that both write completion AND unbind could have been
+	 * completed asynchronously by this point. Since they both release the
+	 * kref, ctxt is _NOT_ guaranteed to be valid here.
+	 */
 
 	return 0;
 }
@@ -740,10 +687,12 @@ static void diag_function_unbind(struct usb_configuration *c,
 	/* Free any pending USB requests from last session */
 	spin_lock_irqsave(&ctxt->lock, flags);
 	free_reqs(ctxt);
-	spin_unlock_irqrestore(&ctxt->lock, flags);
-	kfree(ctxt);
-	if (diag_ch_index)
-		diag_ch_index--;
+
+	if (kref_put(&ctxt->kref, diag_context_release))
+		/* diag_context_release called spin_unlock already */
+		local_irq_restore(flags);
+	else
+		spin_unlock_irqrestore(&ctxt->lock, flags);
 }
 
 static int diag_function_bind(struct usb_configuration *c,
@@ -798,8 +747,6 @@ static int diag_function_bind(struct usb_configuration *c,
 			goto fail;
 	}
 	diag_update_pid_and_serial_num(ctxt);
-	if (++diag_ch_index >= MAX_DIAG_PORTS)
-		diag_ch_index = MAX_DIAG_PORTS-1;
 	return 0;
 fail:
 	if (f->ss_descriptors)
@@ -821,7 +768,7 @@ int diag_function_add(struct usb_configuration *c, const char *name,
 {
 	struct diag_context *dev;
 	struct usb_diag_ch *_ch;
-	int found = 0, ret, status;
+	int found = 0, ret;
 
 	DBG(c->cdev, "diag_function_add\n");
 
@@ -842,19 +789,6 @@ int diag_function_add(struct usb_configuration *c, const char *name,
 
 	list_add_tail(&dev->list_item, &diag_dev_list);
 
-	if (diag_string_defs[diag_ch_index].id == 0) {
-		status = usb_string_id(c->cdev);
-		if (status < 0) {
-			pr_err("%s: failed to get string id, err:%d\n",
-					__func__, status);
-			return status;
-		}
-		diag_string_defs[diag_ch_index].id = status;
-	}
-	diag_string_defs[diag_ch_index].s = _ch->name;
-	intf_desc.iInterface = diag_string_defs[diag_ch_index].id;
-	dev->function.strings = diag_strings;
-
 	/*
 	 * A few diag devices can point to the same channel, in case that
 	 * the diag devices belong to different configurations, however
@@ -872,6 +806,7 @@ int diag_function_add(struct usb_configuration *c, const char *name,
 	dev->function.unbind = diag_function_unbind;
 	dev->function.set_alt = diag_function_set_alt;
 	dev->function.disable = diag_function_disable;
+	kref_init(&dev->kref);
 	spin_lock_init(&dev->lock);
 	INIT_LIST_HEAD(&dev->read_pool);
 	INIT_LIST_HEAD(&dev->write_pool);
@@ -898,8 +833,10 @@ static ssize_t debug_read_stats(struct file *file, char __user *ubuf,
 
 	list_for_each_entry(ch, &usb_diag_ch_list, list) {
 		struct diag_context *ctxt = ch->priv_usb;
+		unsigned long flags;
 
-		if (ctxt)
+		if (ctxt) {
+			spin_lock_irqsave(&ctxt->lock, flags);
 			temp += scnprintf(buf + temp, PAGE_SIZE - temp,
 					"---Name: %s---\n"
 					"endpoints: %s, %s\n"
@@ -911,6 +848,8 @@ static ssize_t debug_read_stats(struct file *file, char __user *ubuf,
 					ctxt->dpkts_tolaptop,
 					ctxt->dpkts_tomodem,
 					ctxt->dpkts_tolaptop_pending);
+			spin_unlock_irqrestore(&ctxt->lock, flags);
+		}
 	}
 
 	return simple_read_from_buffer(ubuf, count, ppos, buf, temp);
@@ -923,11 +862,14 @@ static ssize_t debug_reset_stats(struct file *file, const char __user *buf,
 
 	list_for_each_entry(ch, &usb_diag_ch_list, list) {
 		struct diag_context *ctxt = ch->priv_usb;
+		unsigned long flags;
 
 		if (ctxt) {
+			spin_lock_irqsave(&ctxt->lock, flags);
 			ctxt->dpkts_tolaptop = 0;
 			ctxt->dpkts_tomodem = 0;
 			ctxt->dpkts_tolaptop_pending = 0;
+			spin_unlock_irqrestore(&ctxt->lock, flags);
 		}
 	}
 

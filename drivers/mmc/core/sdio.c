@@ -468,9 +468,9 @@ static void sdio_select_driver_type(struct mmc_card *card)
 	 * information and let the hardware specific code
 	 * return what is possible given the options
 	 */
-	drive_strength = card->host->ops->select_drive_strength(card->host,
-								host_drv_type,
-								card_drv_type);
+	drive_strength = card->host->ops->select_drive_strength(
+		card->sw_caps.uhs_max_dtr,
+		host_drv_type, card_drv_type);
 
 	/* if error just use default for drive strength B */
 	err = mmc_io_rw_direct(card, 0, 0, SDIO_CCCR_DRIVE_STRENGTH, 0,
@@ -1074,6 +1074,7 @@ static int mmc_sdio_power_restore(struct mmc_host *host)
 	mmc_send_if_cond(host, host->ocr_avail);
 
 	ret = mmc_send_io_op_cond(host, 0, &ocr);
+
 	if (ret)
 		goto out;
 
@@ -1124,8 +1125,14 @@ int mmc_attach_sdio(struct mmc_host *host)
 	WARN_ON(!host->claimed);
 
 	err = mmc_send_io_op_cond(host, 0, &ocr);
-	if (err)
+	if (err) {
+#if defined( CONFIG_BCMDHD )
+		if (host->caps & MMC_CAP_NONREMOVABLE) {
+			host->rescan_entered = 0;
+		}
+#endif
 		return err;
+	}
 
 	mmc_attach_bus(host, &mmc_sdio_ops);
 	if (host->ocr_avail_sdio)

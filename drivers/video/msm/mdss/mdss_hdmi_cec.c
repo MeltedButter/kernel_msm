@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,7 +13,9 @@
 #include <linux/io.h>
 #include <linux/list.h>
 #include <linux/types.h>
-#include <mach/board.h>
+#include <linux/stat.h>
+#include <linux/slab.h>
+#include <linux/device.h>
 
 #include "mdss_hdmi_cec.h"
 
@@ -76,18 +78,18 @@ static void hdmi_cec_dump_msg(struct hdmi_cec_ctrl *cec_ctrl,
 	DEV_DBG("=================%pS dump start =====================\n",
 		__builtin_return_address(0));
 
-	DEV_DBG("sender_id     : %d", msg->sender_id);
-	DEV_DBG("recvr_id      : %d", msg->recvr_id);
+	DEV_DBG("sender_id     : %d\n", msg->sender_id);
+	DEV_DBG("recvr_id      : %d\n", msg->recvr_id);
 
 	if (msg->frame_size < 2) {
-		DEV_DBG("polling message");
+		DEV_DBG("polling message\n");
 		spin_unlock_irqrestore(&cec_ctrl->lock, flags);
 		return;
 	}
 
-	DEV_DBG("opcode        : %02x", msg->opcode);
+	DEV_DBG("opcode        : %02x\n", msg->opcode);
 	for (i = 0; i < msg->frame_size - 2; i++)
-		DEV_DBG("operand(%2d) : %02x", i + 1, msg->operand[i]);
+		DEV_DBG("operand(%2d) : %02x\n", i + 1, msg->operand[i]);
 
 	DEV_DBG("=================%pS dump end =====================\n",
 		__builtin_return_address(0));
@@ -311,7 +313,7 @@ static int hdmi_cec_msg_parser(struct hdmi_cec_ctrl *cec_ctrl,
 static int hdmi_cec_msg_send(struct hdmi_cec_ctrl *cec_ctrl,
 	struct hdmi_cec_msg *msg)
 {
-	int i, line_check_retry = 10;
+	int i, line_check_retry = 10, rc = 0;
 	u32 frame_retransmit = RETRANSMIT_MAX_NUM;
 	bool frame_type;
 	unsigned long flags;
@@ -375,15 +377,17 @@ static int hdmi_cec_msg_send(struct hdmi_cec_ctrl *cec_ctrl,
 	}
 
 	spin_lock_irqsave(&cec_ctrl->lock, flags);
-	if (cec_ctrl->cec_msg_wr_status == CEC_STATUS_WR_ERROR)
+	if (cec_ctrl->cec_msg_wr_status == CEC_STATUS_WR_ERROR) {
+		rc = -ENXIO;
 		DEV_ERR("%s: msg write failed.\n", __func__);
-	else
+	} else {
 		DEV_DBG("%s: CEC write frame done (frame len=%d)", __func__,
 			msg->frame_size);
+	}
 	spin_unlock_irqrestore(&cec_ctrl->lock, flags);
 	hdmi_cec_dump_msg(cec_ctrl, msg);
 
-	return 0;
+	return rc;
 } /* hdmi_cec_msg_send */
 
 static void hdmi_cec_msg_recv(struct work_struct *work)
@@ -450,13 +454,9 @@ static void hdmi_cec_msg_recv(struct work_struct *work)
 	if (cec_ctrl->compliance_response_enabled) {
 		spin_unlock_irqrestore(&cec_ctrl->lock, flags);
 
-		if (hdmi_cec_msg_parser(cec_ctrl, &msg_node->msg) != 0) {
+		if (hdmi_cec_msg_parser(cec_ctrl, &msg_node->msg) != 0)
 			DEV_ERR("%s: cec_msg_parser fail. Sending abort msg\n",
 				__func__);
-			/* reason = "Unrecognized opcode" */
-			hdmi_cec_send_abort_opcode(cec_ctrl,
-				&msg_node->msg, 0x0);
-		}
 		kfree(msg_node);
 	} else {
 		list_add_tail(&msg_node->list, &cec_ctrl->msg_head);
@@ -571,7 +571,10 @@ static ssize_t hdmi_rda_cec_enable_compliance(struct device *dev,
 		DEV_ERR("%s: Invalid cec_ctrl\n", __func__);
 		return -EPERM;
 	}
-
+	if (!cec_ctrl->cec_engine_configed) {
+		pr_err("CEC engine is not configured !!!\n");
+		return -EPERM;
+	}
 	spin_lock_irqsave(&cec_ctrl->lock, flags);
 	ret = snprintf(buf, PAGE_SIZE, "%d\n",
 		cec_ctrl->compliance_response_enabled);
@@ -739,6 +742,13 @@ static ssize_t hdmi_wta_cec_msg(struct device *dev,
 			__func__);
 		return -EPERM;
 	}
+
+	if (!cec_ctrl->cec_engine_configed) {
+		spin_unlock_irqrestore(&cec_ctrl->lock, flags);
+		DEV_ERR("%s: CEC engine is not configed.\n",
+			__func__);
+		return -EPERM;
+	}
 	spin_unlock_irqrestore(&cec_ctrl->lock, flags);
 
 	if (msg->frame_size > MAX_OPERAND_SIZE) {
@@ -793,17 +803,13 @@ int hdmi_cec_isr(void *input)
 	io = cec_ctrl->init_data.io;
 
 	cec_intr = DSS_REG_R_ND(io, HDMI_CEC_INT);
-	DEV_DBG("%s: cec interrupt status is [0x%x]\n", __func__, cec_intr);
 
 	if (!cec_ctrl->cec_enabled) {
-		DEV_ERR("%s: cec is not enabled. Just clear int and return.\n",
-			__func__);
 		DSS_REG_W(io, HDMI_CEC_INT, cec_intr);
 		return 0;
 	}
 
 	cec_status = DSS_REG_R_ND(io, HDMI_CEC_STATUS);
-	DEV_DBG("%s: cec status is [0x%x]\n", __func__, cec_status);
 
 	if ((cec_intr & BIT(0)) && (cec_intr & BIT(1))) {
 		DEV_DBG("%s: CEC_IRQ_FRAME_WR_DONE\n", __func__);
@@ -893,10 +899,13 @@ int hdmi_cec_config(void *input)
 	DSS_REG_W(io, HDMI_CEC_RD_FILTER, BIT(0) | (0x7FF << 4));
 	DSS_REG_W(io, HDMI_CEC_TIME, BIT(0) | ((7 * 0x30) << 7));
 
-	if (cec_ctrl->cec_enabled)
-		hdmi_cec_enable(cec_ctrl);
-
 	spin_lock_irqsave(&cec_ctrl->lock, flags);
+	if (cec_ctrl->cec_enabled) {
+		hdmi_cec_write_logical_addr(cec_ctrl,
+			cec_ctrl->cec_logical_addr);
+		hdmi_cec_enable(cec_ctrl);
+	}
+
 	cec_ctrl->cec_engine_configed = true;
 	spin_unlock_irqrestore(&cec_ctrl->lock, flags);
 

@@ -136,6 +136,9 @@ struct thermal_zone_device_ops {
 	int (*set_trip_hyst) (struct thermal_zone_device *, int,
 			      unsigned long);
 	int (*get_crit_temp) (struct thermal_zone_device *, unsigned long *);
+#ifdef CONFIG_LGE_PM
+	int (*set_crit_temp) (struct thermal_zone_device *, unsigned long);
+#endif
 	int (*set_emul_temp) (struct thermal_zone_device *, unsigned long);
 	int (*get_trend) (struct thermal_zone_device *, int,
 			  enum thermal_trend *);
@@ -186,6 +189,8 @@ struct sensor_info {
 	struct list_head threshold_list;
 	struct mutex lock;
 	struct work_struct work;
+	struct task_struct *sysfs_notify_thread;
+	struct completion sysfs_notify_complete;
 };
 
 struct thermal_zone_device {

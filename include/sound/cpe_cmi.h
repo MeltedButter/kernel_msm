@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -38,6 +38,8 @@
 #define CPE_BOOT_SUCCESS 0x00
 #define CPE_BOOT_FAILED 0x01
 
+#define CPE_CORE_VERSION_SYSTEM_BOOT_EVENT 0x01
+
 /* LSM Service command opcodes */
 #define CPE_LSM_SESSION_CMD_OPEN_TX		(0x2000)
 #define CPE_LSM_SESSION_CMD_SET_PARAMS		(0x2001)
@@ -52,21 +54,20 @@
 #define CPE_LSM_SESSION_CMD_SHARED_MEM_DEALLOC	(0x200A)
 
 /* LSM Service module and param IDs */
-#define LSM_MODULE_ID_VOICE_WAKEUP		(0x00012C00)
-#define LSM_PARAM_ID_ENDPOINT_DETECT_THRESHOLD	(0x00012C01)
-#define LSM_PARAM_ID_OPERATION_MODE		(0x00012C02)
-#define LSM_PARAM_ID_GAIN			(0x00012C03)
-#define LSM_PARAM_ID_CONNECT_TO_PORT		(0x00012C04)
-#define LSM_PARAM_ID_MIN_CONFIDENCE_LEVELS	(0x00012C07)
+#define CPE_LSM_MODULE_ID_VOICE_WAKEUP		(0x00012C00)
+#define CPE_LSM_PARAM_ID_ENDPOINT_DETECT_THRESHOLD (0x00012C01)
+#define CPE_LSM_PARAM_ID_OPERATION_MODE		(0x00012C02)
+#define CPE_LSM_PARAM_ID_GAIN			(0x00012C03)
+#define CPE_LSM_PARAM_ID_CONNECT_TO_PORT	(0x00012C04)
+#define CPE_LSM_PARAM_ID_MIN_CONFIDENCE_LEVELS	(0x00012C07)
 
 /* LSM LAB command opcodes */
 #define CPE_LSM_SESSION_CMD_EOB		0x0000200B
-#define LSM_MODULE_ID_LAB		0x00012C08
+#define CPE_LSM_MODULE_ID_LAB		0x00012C08
 /* used for enable/disable lab*/
-#define LSM_PARAM_ID_LAB_ENABLE		0x00012C09
+#define CPE_LSM_PARAM_ID_LAB_ENABLE	0x00012C09
 /* used for T in LAB config DSP internal buffer*/
-#define LSM_PARAM_ID_LAB_CONFIG		0x00012C0A
-
+#define CPE_LSM_PARAM_ID_LAB_CONFIG	0x00012C0A
 
 /* AFE Service command opcodes */
 #define CPE_AFE_PORT_CMD_START			(0x1001)
@@ -222,6 +223,9 @@ struct cmi_obm_msg {
 
 struct cmi_core_svc_event_system_boot {
 	u8 status;
+	u8 version;
+	u16 sfr_buff_size;
+	u32 sfr_buff_address;
 } __packed;
 
 struct cmi_core_svc_cmd_shared_mem_alloc {

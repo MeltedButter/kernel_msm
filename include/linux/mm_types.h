@@ -26,6 +26,10 @@ struct address_space;
 
 #define USE_SPLIT_PTLOCKS	(NR_CPUS >= CONFIG_SPLIT_PTLOCK_CPUS)
 
+#ifdef CONFIG_PAGE_USAGE
+#define TASK_COMM_LEN	16
+#endif
+
 /*
  * Each physical page in the system has a struct page associated with
  * it to keep track of whatever it is we are using the page for at the
@@ -166,6 +170,9 @@ struct page {
 #ifdef CONFIG_WANT_PAGE_DEBUG_FLAGS
 	unsigned long debug_flags;	/* Use atomic bitops on this */
 #endif
+#ifdef CONFIG_BLK_DEV_IO_TRACE
+	struct task_struct *tsk_dirty;	/* task that sets this page dirty */
+#endif
 
 #ifdef CONFIG_KMEMCHECK
 	/*
@@ -183,6 +190,12 @@ struct page {
 	gfp_t gfp_mask;
 	struct stack_trace trace;
 	unsigned long trace_entries[8];
+#endif
+#ifdef CONFIG_PAGE_USAGE
+	pid_t task_tgid;
+	char task_comm[TASK_COMM_LEN];
+	__u8 task_type;
+	__u8 zone_stat;
 #endif
 }
 /*
@@ -342,13 +355,10 @@ struct mm_struct {
 	unsigned long (*get_unmapped_area) (struct file *filp,
 				unsigned long addr, unsigned long len,
 				unsigned long pgoff, unsigned long flags);
-	void (*unmap_area) (struct mm_struct *mm, unsigned long addr);
 #endif
 	unsigned long mmap_base;		/* base of mmap area */
 	unsigned long mmap_legacy_base;         /* base of mmap area in bottom-up allocations */
 	unsigned long task_size;		/* size of task vm space */
-	unsigned long cached_hole_size; 	/* if non-zero, the largest hole below free_area_cache */
-	unsigned long free_area_cache;		/* first hole of size cached_hole_size or larger */
 	unsigned long highest_vm_end;		/* highest vma end address */
 	pgd_t * pgd;
 	atomic_t mm_users;			/* How many users with user space? */

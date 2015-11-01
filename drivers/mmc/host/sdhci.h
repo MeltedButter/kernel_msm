@@ -20,6 +20,10 @@
 
 #include <linux/mmc/sdhci.h>
 
+#if defined(CONFIG_LGE_MMC_DYNAMIC_LOG)
+#include <linux/mmc/debug_log.h>
+#endif
+
 /*
  * Controller registers
  */
@@ -302,8 +306,6 @@ struct sdhci_ops {
 	void	(*platform_reset_exit)(struct sdhci_host *host, u8 mask);
 	int	(*set_uhs_signaling)(struct sdhci_host *host, unsigned int uhs);
 	void	(*hw_reset)(struct sdhci_host *host);
-	int	(*select_drive_strength)(struct sdhci_host *host,
-					 int host_drv, int card_drv);
 	void	(*platform_suspend)(struct sdhci_host *host);
 	void	(*platform_resume)(struct sdhci_host *host);
 	void    (*adma_workaround)(struct sdhci_host *host, u32 intmask);
@@ -433,4 +435,5 @@ extern int sdhci_runtime_suspend_host(struct sdhci_host *host);
 extern int sdhci_runtime_resume_host(struct sdhci_host *host);
 #endif
 
+void sdhci_cfg_irq(struct sdhci_host *host, bool enable, bool sync);
 #endif /* __SDHCI_HW_H */

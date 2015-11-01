@@ -18,6 +18,8 @@
 #include <linux/poll.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/vmalloc.h>
+#include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/input/mt.h>
@@ -53,7 +55,7 @@ struct evdev_client {
 	struct list_head node;
 	int clkid;
 	unsigned int bufsize;
-	struct input_event *buffer;
+	struct input_event buffer[];
 };
 
 static void __pass_event(struct evdev_client *client,
@@ -87,6 +89,39 @@ static void __pass_event(struct evdev_client *client,
 	}
 }
 
+#if defined(CONFIG_LGE_EVENT_LOCK)
+bool is_event_locked;
+
+void evdev_set_event_lock(bool lock)
+{
+	is_event_locked = lock;
+}
+EXPORT_SYMBOL(evdev_set_event_lock);
+
+bool evdev_get_event_lock(void)
+{
+	return is_event_locked;
+}
+EXPORT_SYMBOL(evdev_get_event_lock);
+
+#define IS_EVENT(_event, _type, _code) \
+	((_event)->type == _type && (_event)->code == _code)
+
+static void __pass_event_locked(struct evdev_client *client,
+		struct input_event *event)
+{
+	static struct input_event last_event;
+
+	if (IS_EVENT(event, EV_SYN, SYN_REPORT))
+		if (IS_EVENT(&last_event, EV_KEY, KEY_POWER)) {
+			__pass_event(client, &last_event);
+			__pass_event(client, event);
+		}
+
+	last_event = *event;
+}
+#endif
+
 static void evdev_pass_values(struct evdev_client *client,
 			const struct input_value *vals, unsigned int count,
 			ktime_t mono, ktime_t real)
@@ -106,6 +141,12 @@ static void evdev_pass_values(struct evdev_client *client,
 		event.type = v->type;
 		event.code = v->code;
 		event.value = v->value;
+
+#if defined(CONFIG_LGE_EVENT_LOCK)
+		if (is_event_locked)
+			__pass_event_locked(client, &event);
+		else
+#endif
 		__pass_event(client, &event);
 		if (v->type == EV_SYN && v->code == SYN_REPORT)
 			wakeup = true;
@@ -300,8 +341,10 @@ static int evdev_release(struct inode *inode, struct file *file)
 	if (client->use_wake_lock)
 		wake_lock_destroy(&client->wake_lock);
 
-	kfree(client->buffer);
-	kfree(client);
+	if (is_vmalloc_addr(client))
+		vfree(client);
+	else
+		kfree(client);
 
 	evdev_close_device(evdev);
 
@@ -321,22 +364,16 @@ static int evdev_open(struct inode *inode, struct file *file)
 {
 	struct evdev *evdev = container_of(inode->i_cdev, struct evdev, cdev);
 	unsigned int bufsize = evdev_compute_buffer_size(evdev->handle.dev);
+	unsigned int size = sizeof(struct evdev_client) +
+					bufsize * sizeof(struct input_event);
 	struct evdev_client *client;
 	int error;
 
-	client = kzalloc(sizeof(struct evdev_client), GFP_KERNEL);
-	if (!client) {
-		error = -ENOMEM;
-		goto err_return;
-	} else {
-		client->buffer = kzalloc(bufsize * sizeof(struct input_event),
-					GFP_KERNEL);
-		if (!client->buffer) {
-			kfree(client);
-			error = -ENOMEM;
-			goto err_return;
-		}
-	}
+	client = kzalloc(size, GFP_KERNEL | __GFP_NOWARN);
+	if (!client)
+		client = vzalloc(size);
+	if (!client)
+		return -ENOMEM;
 
 	client->clkid = CLOCK_MONOTONIC;
 	client->bufsize = bufsize;
@@ -357,9 +394,7 @@ static int evdev_open(struct inode *inode, struct file *file)
 
  err_free_client:
 	evdev_detach_client(evdev, client);
-	kfree(client->buffer);
 	kfree(client);
- err_return:
 	return error;
 }
 

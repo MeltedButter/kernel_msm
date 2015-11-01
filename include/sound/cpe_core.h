@@ -53,7 +53,7 @@ struct wcd_cpe_lab_hw_params {
 };
 
 struct wcd_cpe_lsm_lab {
-	bool lab_enable;
+	u32 lab_enable;
 	void *slim_handle;
 	void *core_handle;
 	atomic_t in_count;
@@ -67,6 +67,7 @@ struct wcd_cpe_lsm_lab {
 	struct wcd_cpe_lab_hw_params hw_params;
 	struct wcd_cpe_data_pcm_buf *pcm_buf;
 	wait_queue_head_t period_wait;
+	struct completion thread_complete;
 };
 
 struct cpe_lsm_session {
@@ -91,6 +92,7 @@ struct cpe_lsm_session {
 	u8 num_confidence_levels;
 	struct task_struct *lsm_lab_thread;
 	struct wcd_cpe_lsm_lab lab;
+	bool started;
 };
 
 struct wcd_cpe_afe_ops {
@@ -163,6 +165,11 @@ struct wcd_cpe_lsm_ops {
 				struct cpe_lsm_session *session,
 				phys_addr_t phys, u8 *mem,
 				u32 read_len);
+
+	int (*lsm_set_data) (void *core_handle,
+			struct cpe_lsm_session *session,
+			enum lsm_detection_mode detect_mode,
+			bool detect_failure);
 };
 
 int wcd_cpe_get_lsm_ops(struct wcd_cpe_lsm_ops *);

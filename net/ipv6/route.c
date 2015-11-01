@@ -728,8 +728,7 @@ int rt6_route_rcv(struct net_device *dev, u8 *opt, int len,
 	if (rinfo->prefix_len == 0)
 		rt = rt6_get_dflt_router(gwaddr, dev);
 	else
-		rt = rt6_get_route_info(dev, prefix, rinfo->prefix_len,
-					gwaddr);
+		rt = rt6_get_route_info(dev, prefix, rinfo->prefix_len, gwaddr);
 
 	if (rt && !lifetime) {
 		ip6_del_rt(rt);
@@ -1150,7 +1149,7 @@ static void ip6_rt_update_pmtu(struct dst_entry *dst, struct sock *sk,
 }
 
 void ip6_update_pmtu(struct sk_buff *skb, struct net *net, __be32 mtu,
-		     int oif, u32 mark, kuid_t uid)
+		     int oif, u32 mark)
 {
 	const struct ipv6hdr *iph = (struct ipv6hdr *) skb->data;
 	struct dst_entry *dst;
@@ -1163,7 +1162,6 @@ void ip6_update_pmtu(struct sk_buff *skb, struct net *net, __be32 mtu,
 	fl6.daddr = iph->daddr;
 	fl6.saddr = iph->saddr;
 	fl6.flowlabel = ip6_flowinfo(iph);
-	fl6.flowi6_uid = uid;
 
 	dst = ip6_route_output(net, NULL, &fl6);
 	if (!dst->error)
@@ -1175,7 +1173,7 @@ EXPORT_SYMBOL_GPL(ip6_update_pmtu);
 void ip6_sk_update_pmtu(struct sk_buff *skb, struct sock *sk, __be32 mtu)
 {
 	ip6_update_pmtu(skb, sock_net(sk), mtu,
-			sk->sk_bound_dev_if, sk->sk_mark, sock_i_uid(sk));
+			sk->sk_bound_dev_if, sk->sk_mark);
 }
 EXPORT_SYMBOL_GPL(ip6_sk_update_pmtu);
 
@@ -1234,7 +1232,7 @@ static unsigned int ip6_mtu(const struct dst_entry *dst)
 	unsigned int mtu = dst_metric_raw(dst, RTAX_MTU);
 
 	if (mtu)
-		return mtu;
+		goto out;
 
 	mtu = IPV6_MIN_MTU;
 
@@ -1244,7 +1242,8 @@ static unsigned int ip6_mtu(const struct dst_entry *dst)
 		mtu = idev->cnf.mtu6;
 	rcu_read_unlock();
 
-	return mtu;
+out:
+	return min_t(unsigned int, mtu, IP6_MAX_MTU);
 }
 
 static struct dst_entry *icmp6_dst_gc_list;
@@ -2558,6 +2557,15 @@ static int rt6_fill_node(struct net *net,
 			goto nla_put_failure;
 	}
 
+  /* 2014-11-21, hani.park@lge.com LGP_DATA_QC_CR [START] */
+  //G3L netlink kernel crash in case of WiFi on/off repeat
+  if (unlikely((unsigned long)dst_metrics_ptr(&rt->dst) < 2)) {
+      WARN(1, "Got null _metrics from rt->dst");
+      printk(KERN_DEBUG "Got null _metrics from rt->dst \n");
+      goto nla_put_failure;
+  }
+  /* 2014-11-21, hani.park@lge.com LGP_DATA_QC_CR [END] */
+
 	if (rtnetlink_put_metrics(skb, dst_metrics_ptr(&rt->dst)) < 0)
 		goto nla_put_failure;
 
@@ -2639,10 +2647,9 @@ static int inet6_rtm_getroute(struct sk_buff *in_skb, struct nlmsghdr* nlh)
 		oif = nla_get_u32(tb[RTA_OIF]);
 
 	if (tb[RTA_UID])
-		fl6.flowi6_uid = make_kuid(current_user_ns(),
-					   nla_get_u32(tb[RTA_UID]));
+		fl6.flowi6_uid = nla_get_u32(tb[RTA_UID]);
 	else
-		fl6.flowi6_uid = iif ? INVALID_UID : current_uid();
+		fl6.flowi6_uid = (iif ? (uid_t) -1 : current_uid());
 
 	if (iif) {
 		struct net_device *dev;

@@ -38,9 +38,8 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 
 			memset(&devinfo, 0, sizeof(devinfo));
 			devinfo.device_id = device->id + 1;
-			devinfo.chip_id = adreno_dev->chip_id;
+			devinfo.chip_id = adreno_dev->chipid;
 			devinfo.mmu_enabled = kgsl_mmu_enabled();
-			devinfo.gpu_id = adreno_dev->gpurev;
 			devinfo.gmem_gpubaseaddr = adreno_dev->gmem_base;
 			devinfo.gmem_sizebytes = adreno_dev->gmem_size;
 
@@ -95,6 +94,56 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 	return status;
 }
 
+int adreno_setproperty_compat(struct kgsl_device_private *dev_priv,
+				enum kgsl_property_type type,
+				void __user *value,
+				unsigned int sizebytes)
+{
+	int status = -EINVAL;
+	struct kgsl_device *device = dev_priv->device;
+
+	switch (type) {
+	case KGSL_PROP_PWR_CONSTRAINT: {
+			struct kgsl_device_constraint_compat constraint32;
+			struct kgsl_device_constraint constraint;
+			struct kgsl_context *context;
+
+			if (sizebytes != sizeof(constraint32))
+				break;
+
+			if (copy_from_user(&constraint32, value,
+				sizeof(constraint32))) {
+				status = -EFAULT;
+				break;
+			}
+
+			/* Populate the real constraint type from the compat */
+			constraint.type = constraint32.type;
+			constraint.context_id = constraint32.context_id;
+			constraint.data = compat_ptr(constraint32.data);
+			constraint.size = (size_t)constraint32.size;
+
+			context = kgsl_context_get_owner(dev_priv,
+							constraint.context_id);
+			if (context == NULL)
+				break;
+			status = adreno_set_constraint(device, context,
+								&constraint);
+			kgsl_context_put(context);
+		}
+		break;
+	default:
+		/*
+		 * Call adreno_setproperty in case the property type was
+		 * KGSL_PROP_PWRCTRL
+		 */
+		status = device->ftbl->setproperty(dev_priv, type, value,
+						sizebytes);
+	}
+
+	return status;
+}
+
 long adreno_compat_ioctl(struct kgsl_device_private *dev_priv,
 			      unsigned int cmd, void *data)
 {
@@ -123,12 +172,8 @@ long adreno_compat_ioctl(struct kgsl_device_private *dev_priv,
 		read.reads = (struct kgsl_perfcounter_read_group __user *)
 				(uintptr_t)read32->reads;
 		read.count = read32->count;
-		result = kgsl_active_count_get(device);
-		if (result)
-			break;
 		result = adreno_perfcounter_read_group(adreno_dev,
 			read.reads, read.count);
-		kgsl_active_count_put(device);
 		break;
 	}
 	default:

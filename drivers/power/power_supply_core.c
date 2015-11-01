@@ -19,6 +19,9 @@
 #include <linux/power_supply.h>
 #include <linux/thermal.h>
 #include "power_supply.h"
+#ifdef CONFIG_LGE_PM_CHARGER_CONTROLLER
+#include "charger-controller.h"
+#endif
 
 /* exported for the APM Power driver, APM emulation */
 struct class *power_supply_class;
@@ -51,6 +54,43 @@ static bool __power_supply_is_supplied_by(struct power_supply *supplier,
 
 	return false;
 }
+
+#ifdef CONFIG_DWC3_MSM_BC_12_VZW_SUPPORT
+int power_supply_set_floated_charger(struct power_supply *psy,
+				int is_float)
+{
+	const union power_supply_propval ret = {is_float,};
+
+	if (psy->set_event_property)
+		return psy->set_event_property(psy, POWER_SUPPLY_PROP_FLOATED_CHARGER,
+								&ret);
+
+	return -ENXIO;
+}
+EXPORT_SYMBOL_GPL(power_supply_set_floated_charger);
+#endif
+
+/**
+ * power_supply_set_voltage_limit - set current limit
+ * @psy:	the power supply to control
+ * @limit:	current limit in uV from the power supply.
+ *		0 will disable the power supply.
+ *
+ * This function will set a maximum supply current from a source
+ * and it will disable the charger when limit is 0.
+ */
+int power_supply_set_voltage_limit(struct power_supply *psy, int limit)
+{
+	const union power_supply_propval ret = {limit,};
+
+	if (psy->set_property)
+		return psy->set_property(psy, POWER_SUPPLY_PROP_VOLTAGE_MAX,
+								&ret);
+
+	return -ENXIO;
+}
+EXPORT_SYMBOL(power_supply_set_voltage_limit);
+
 
 /**
  * power_supply_set_current_limit - set current limit
@@ -160,6 +200,22 @@ int power_supply_set_scope(struct power_supply *psy, int scope)
 EXPORT_SYMBOL_GPL(power_supply_set_scope);
 
 /**
+ * power_supply_set_usb_otg - set otg of the usb power supply
+ * @psy:	the usb power supply to control
+ * @scope:	value to set the otg property to
+ */
+int power_supply_set_usb_otg(struct power_supply *psy, int otg)
+{
+	const union power_supply_propval ret = {otg, };
+
+	if (psy->set_property)
+		return psy->set_property(psy, POWER_SUPPLY_PROP_USB_OTG,
+								&ret);
+	return -ENXIO;
+}
+EXPORT_SYMBOL(power_supply_set_usb_otg);
+
+/**
  * power_supply_set_supply_type - set type of the power supply
  * @psy:	the power supply to control
  * @supply_type:	sets type property of power supply
@@ -193,6 +249,40 @@ int power_supply_set_charge_type(struct power_supply *psy, int charge_type)
 	return -ENXIO;
 }
 EXPORT_SYMBOL_GPL(power_supply_set_charge_type);
+
+/**
+ * power_supply_set_hi_power_state - set power state for power_supply
+ * @psy:	the power supply to control
+ * @value:	value to be passed to the power_supply
+ *
+ */
+int power_supply_set_hi_power_state(struct power_supply *psy, int value)
+{
+	const union power_supply_propval ret = {value, };
+
+	if (psy->set_property)
+		return psy->set_property(psy, POWER_SUPPLY_PROP_HI_POWER,
+								&ret);
+	return -ENXIO;
+}
+EXPORT_SYMBOL(power_supply_set_hi_power_state);
+
+/**
+ * power_supply_set_low_power_state - set power state for power_supply
+ * @psy:	the power supply to control
+ * @value:	value to be passed to the power_supply
+ *
+ */
+int power_supply_set_low_power_state(struct power_supply *psy, int value)
+{
+	const union power_supply_propval ret = {value, };
+
+	if (psy->set_property)
+		return psy->set_property(psy, POWER_SUPPLY_PROP_LOW_POWER,
+								&ret);
+	return -ENXIO;
+}
+EXPORT_SYMBOL(power_supply_set_low_power_state);
 
 static int __power_supply_changed_work(struct device *dev, void *data)
 {
@@ -238,7 +328,9 @@ void power_supply_changed(struct power_supply *psy)
 	unsigned long flags;
 
 	dev_dbg(psy->dev, "%s\n", __func__);
-
+#ifdef CONFIG_LGE_PM_CHARGER_CONTROLLER
+	notify_charger_controller(psy, 1);
+#endif
 	spin_lock_irqsave(&psy->changed_lock, flags);
 	psy->changed = true;
 	pm_stay_awake(psy->dev);

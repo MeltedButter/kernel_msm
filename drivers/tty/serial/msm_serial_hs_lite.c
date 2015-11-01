@@ -49,10 +49,13 @@
 #include <linux/wakelock.h>
 #include <linux/types.h>
 #include <asm/byteorder.h>
-#include <mach/board.h>
-#include <mach/msm_serial_hs_lite.h>
-#include <mach/msm_bus.h>
+#include <linux/platform_data/qcom-serial_hs_lite.h>
+#include <linux/msm-bus.h>
 #include "msm_serial_hs_hwreg.h"
+
+#ifdef CONFIG_LGE_EARJACK_DEBUGGER
+#include <soc/qcom/lge/board_lge.h>
+#endif
 
 /*
  * There are 3 different kind of UART Core available on MSM.
@@ -85,7 +88,7 @@ struct msm_hsl_port {
 	unsigned int            *gsbi_mapbase;
 	unsigned int            *mapped_gsbi;
 	unsigned int            old_snap_state;
-	unsigned int		ver_id;
+	unsigned long		ver_id;
 	int			tx_timeout;
 	struct mutex		clk_mutex;
 	enum uart_core_type	uart_type;
@@ -151,7 +154,7 @@ static const unsigned int regmap[][UARTDM_LAST] = {
 
 static struct of_device_id msm_hsl_match_table[] = {
 	{	.compatible = "qcom,msm-lsuart-v14",
-		.data = (void *)UARTDM_VERSION_14
+		.data = (void *)UARTDM_VERSION_14,
 	},
 	{}
 };
@@ -522,6 +525,11 @@ static void msm_hsl_start_tx(struct uart_port *port)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
+#ifdef CONFIG_LGE_EARJACK_DEBUGGER
+	if (!lge_uart_console_get_enabled() && is_console(port))
+		return;
+#endif
+
 	if (port->suspended) {
 		pr_err("%s: System is in Suspend state\n", __func__);
 		return;
@@ -748,6 +756,11 @@ static unsigned int msm_hsl_tx_empty(struct uart_port *port)
 	unsigned int ret;
 	unsigned int vid = UART_TO_MSM(port)->ver_id;
 
+#ifdef CONFIG_LGE_EARJACK_DEBUGGER
+	if (!lge_uart_console_get_enabled() && is_console(port))
+		return 1;
+#endif
+
 	ret = (msm_hsl_read(port, regmap[vid][UARTDM_SR]) &
 	       UARTDM_SR_TXEMT_BMSK) ? TIOCSER_TEMT : 0;
 	return ret;
@@ -965,6 +978,7 @@ static void msm_hsl_set_baud_rate(struct uart_port *port,
 	msm_hsl_write(port, STALE_EVENT_ENABLE, regmap[vid][UARTDM_CR]);
 }
 
+#ifndef CONFIG_LGE_EARJACK_DEBUGGER
 static void msm_hsl_init_clock(struct uart_port *port)
 {
 	clk_en(port, 1);
@@ -974,6 +988,7 @@ static void msm_hsl_deinit_clock(struct uart_port *port)
 {
 	clk_en(port, 0);
 }
+#endif
 
 static int msm_hsl_startup(struct uart_port *port)
 {
@@ -1450,6 +1465,11 @@ static void msm_hsl_console_write(struct console *co, const char *s,
 
 	BUG_ON(co->index < 0 || co->index >= UART_NR);
 
+#ifdef CONFIG_LGE_EARJACK_DEBUGGER
+	if (!lge_uart_console_get_enabled())
+		return;
+#endif
+
 	port = get_port_from_line(co->index);
 	msm_hsl_port = UART_TO_MSM(port);
 	vid = msm_hsl_port->ver_id;
@@ -1486,13 +1506,14 @@ static int msm_hsl_console_setup(struct console *co, char *options)
 
 	port->cons = co;
 
-	console_lock();
+#ifndef CONFIG_LGE_EARJACK_DEBUGGER
 	pm_runtime_get_noresume(port->dev);
 
 #ifndef CONFIG_PM_RUNTIME
 	msm_hsl_init_clock(port);
 #endif
 	pm_runtime_resume(port->dev);
+#endif
 
 	if (options)
 		uart_parse_options(options, &baud, &parity, &bits, &flow);
@@ -1503,6 +1524,8 @@ static int msm_hsl_console_setup(struct console *co, char *options)
 	msm_hsl_write(port, UARTDM_MR2_BITS_PER_CHAR_8 | STOP_BIT_ONE,
 		      regmap[vid][UARTDM_MR2]);	/* 8N1 */
 
+	if (baud < 300 || baud > 115200)
+		baud = 115200;
 	msm_hsl_set_baud_rate(port, baud);
 
 	ret = uart_set_options(port, co, baud, parity, bits, flow);
@@ -1520,7 +1543,6 @@ static int msm_hsl_console_setup(struct console *co, char *options)
 	msm_hsl_write(port, 1, regmap[vid][UARTDM_NCF_TX]);
 	msm_hsl_read(port, regmap[vid][UARTDM_NCF_TX]);
 
-	console_unlock();
 	pr_info("console setup on port #%d\n", port->line);
 
 	return ret;
@@ -1690,6 +1712,45 @@ static struct msm_serial_hslite_platform_data
 
 static atomic_t msm_serial_hsl_next_id = ATOMIC_INIT(0);
 
+#ifdef CONFIG_LGE_EARJACK_DEBUGGER
+/* Put ttyHSL0 to rpm suspend status and update uart mode.
+ * This function assumes that the console has been already registered. */
+int msm_serial_set_uart_console(int enable)
+{
+	struct uart_port *port = &msm_hsl_uart_ports[0].uart;
+
+	if (enable)
+		enable = UART_CONSOLE_ENABLED;
+
+	if (lge_uart_console_get_enabled() == enable) {
+		return -EINVAL;
+	}
+
+	/* lge_uart_console status should be chagned for status control,
+	 * but real activation can not be permitted */
+	if (enable) {
+		lge_uart_console_set_enabled(UART_CONSOLE_ENABLED);
+
+		if (lge_uart_console_get_ready()) {
+			pm_runtime_get(port->dev);
+			return 0;
+		}
+	} else {
+		lge_uart_console_set_enabled(!UART_CONSOLE_ENABLED);
+
+		if (lge_uart_console_get_ready()) {
+			pm_runtime_put_noidle(port->dev);
+			pm_runtime_suspend(port->dev);
+
+			return 0;
+		}
+	}
+
+	return -EPERM;
+}
+EXPORT_SYMBOL(msm_serial_set_uart_console);
+#endif
+
 static int msm_serial_hsl_probe(struct platform_device *pdev)
 {
 	struct msm_hsl_port *msm_hsl_port;
@@ -1769,7 +1830,7 @@ static int msm_serial_hsl_probe(struct platform_device *pdev)
 	if (!match) {
 		msm_hsl_port->ver_id = UARTDM_VERSION_11_13;
 	} else {
-		msm_hsl_port->ver_id = (unsigned int)match->data;
+		msm_hsl_port->ver_id = (unsigned long)match->data;
 		/*
 		 * BLSP based UART configuration is available with
 		 * UARTDM v14 Revision. Hence set uart_type as UART_BLSP.
@@ -1844,6 +1905,20 @@ static int msm_serial_hsl_probe(struct platform_device *pdev)
 	if (msm_hsl_port->pclk)
 		clk_disable_unprepare(msm_hsl_port->pclk);
 
+#ifdef CONFIG_LGE_EARJACK_DEBUGGER
+	if (!lge_uart_console_get_ready() && is_console(port)) {
+		lge_uart_console_set_ready(UART_CONSOLE_READY);
+
+		/* uart console can be in enabled status
+		 * before msm_serial_hsl_probe().
+		 * so we should check to activate console right now.
+		 */
+		if (lge_uart_console_get_enabled()) {
+			pm_runtime_get(port->dev);
+		}
+	}
+#endif
+
 err:
 	return ret;
 }
@@ -1885,13 +1960,16 @@ static int msm_serial_hsl_suspend(struct device *dev)
 	port = get_port_from_line(get_line(pdev));
 
 	if (port) {
-
+#ifdef CONFIG_LGE_EARJACK_DEBUGGER
+		uart_suspend_port(&msm_hsl_uart_driver, port);
+#else
 		if (is_console(port))
 			msm_hsl_deinit_clock(port);
 
 		uart_suspend_port(&msm_hsl_uart_driver, port);
 		if (device_may_wakeup(dev))
 			enable_irq_wake(port->irq);
+#endif
 	}
 
 	return 0;
@@ -1904,13 +1982,16 @@ static int msm_serial_hsl_resume(struct device *dev)
 	port = get_port_from_line(get_line(pdev));
 
 	if (port) {
-
+#ifdef CONFIG_LGE_EARJACK_DEBUGGER
+		uart_resume_port(&msm_hsl_uart_driver, port);
+#else
 		uart_resume_port(&msm_hsl_uart_driver, port);
 		if (device_may_wakeup(dev))
 			disable_irq_wake(port->irq);
 
 		if (is_console(port))
 			msm_hsl_init_clock(port);
+#endif
 	}
 
 	return 0;
@@ -1927,7 +2008,12 @@ static int msm_hsl_runtime_suspend(struct device *dev)
 	port = get_port_from_line(get_line(pdev));
 
 	dev_dbg(dev, "pm_runtime: suspending\n");
+#ifdef CONFIG_LGE_EARJACK_DEBUGGER
+	if (port)
+		uart_suspend_port(&msm_hsl_uart_driver, port);
+#else
 	msm_hsl_deinit_clock(port);
+#endif
 	return 0;
 }
 
@@ -1938,7 +2024,12 @@ static int msm_hsl_runtime_resume(struct device *dev)
 	port = get_port_from_line(get_line(pdev));
 
 	dev_dbg(dev, "pm_runtime: resuming\n");
+#ifdef CONFIG_LGE_EARJACK_DEBUGGER
+	if (port)
+		uart_resume_port(&msm_hsl_uart_driver, port);
+#else
 	msm_hsl_init_clock(port);
+#endif
 	return 0;
 }
 

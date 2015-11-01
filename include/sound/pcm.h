@@ -65,6 +65,8 @@ struct snd_pcm_ops {
 	int (*close)(struct snd_pcm_substream *substream);
 	int (*ioctl)(struct snd_pcm_substream * substream,
 		     unsigned int cmd, void *arg);
+	int (*compat_ioctl)(struct snd_pcm_substream *substream,
+		     unsigned int cmd, void *arg);
 	int (*hw_params)(struct snd_pcm_substream *substream,
 			 struct snd_pcm_hw_params *params);
 	int (*hw_free)(struct snd_pcm_substream *substream);
@@ -123,23 +125,25 @@ struct snd_pcm_ops {
 #define SNDRV_PCM_RATE_5512		(1<<0)		/* 5512Hz */
 #define SNDRV_PCM_RATE_8000		(1<<1)		/* 8000Hz */
 #define SNDRV_PCM_RATE_11025		(1<<2)		/* 11025Hz */
-#define SNDRV_PCM_RATE_16000		(1<<3)		/* 16000Hz */
-#define SNDRV_PCM_RATE_22050		(1<<4)		/* 22050Hz */
-#define SNDRV_PCM_RATE_32000		(1<<5)		/* 32000Hz */
-#define SNDRV_PCM_RATE_44100		(1<<6)		/* 44100Hz */
-#define SNDRV_PCM_RATE_48000		(1<<7)		/* 48000Hz */
-#define SNDRV_PCM_RATE_64000		(1<<8)		/* 64000Hz */
-#define SNDRV_PCM_RATE_88200		(1<<9)		/* 88200Hz */
-#define SNDRV_PCM_RATE_96000		(1<<10)		/* 96000Hz */
-#define SNDRV_PCM_RATE_176400		(1<<11)		/* 176400Hz */
-#define SNDRV_PCM_RATE_192000		(1<<12)		/* 192000Hz */
+#define SNDRV_PCM_RATE_12000		(1<<3)		/* 12000Hz */
+#define SNDRV_PCM_RATE_16000		(1<<4)		/* 16000Hz */
+#define SNDRV_PCM_RATE_22050		(1<<5)		/* 22050Hz */
+#define SNDRV_PCM_RATE_24000		(1<<6)		/* 24000Hz */
+#define SNDRV_PCM_RATE_32000		(1<<7)		/* 32000Hz */
+#define SNDRV_PCM_RATE_44100		(1<<8)		/* 44100Hz */
+#define SNDRV_PCM_RATE_48000		(1<<9)		/* 48000Hz */
+#define SNDRV_PCM_RATE_64000		(1<<10)		/* 64000Hz */
+#define SNDRV_PCM_RATE_88200		(1<<11)		/* 88200Hz */
+#define SNDRV_PCM_RATE_96000		(1<<12)		/* 96000Hz */
+#define SNDRV_PCM_RATE_176400		(1<<13)		/* 176400Hz */
+#define SNDRV_PCM_RATE_192000		(1<<14)		/* 192000Hz */
 
 #define SNDRV_PCM_RATE_CONTINUOUS	(1<<30)		/* continuous range */
 #define SNDRV_PCM_RATE_KNOT		(1<<31)		/* supports more non-continuos rates */
 
 #define SNDRV_PCM_RATE_8000_44100	(SNDRV_PCM_RATE_8000|SNDRV_PCM_RATE_11025|\
-					 SNDRV_PCM_RATE_16000|SNDRV_PCM_RATE_22050|\
-					 SNDRV_PCM_RATE_32000|SNDRV_PCM_RATE_44100)
+					 SNDRV_PCM_RATE_12000 |SNDRV_PCM_RATE_16000|SNDRV_PCM_RATE_22050|\
+					 SNDRV_PCM_RATE_24000 |SNDRV_PCM_RATE_32000|SNDRV_PCM_RATE_44100)
 #define SNDRV_PCM_RATE_8000_48000	(SNDRV_PCM_RATE_8000_44100|SNDRV_PCM_RATE_48000)
 #define SNDRV_PCM_RATE_8000_96000	(SNDRV_PCM_RATE_8000_48000|SNDRV_PCM_RATE_64000|\
 					 SNDRV_PCM_RATE_88200|SNDRV_PCM_RATE_96000)
@@ -453,6 +457,7 @@ struct snd_pcm_str {
 #endif
 	struct snd_kcontrol *chmap_kctl; /* channel-mapping controls */
 	struct snd_kcontrol *vol_kctl; /* volume controls */
+	struct snd_kcontrol *usr_kctl; /* user controls */
 };
 
 struct snd_pcm {
@@ -1172,5 +1177,29 @@ int snd_pcm_add_volume_ctls(struct snd_pcm *pcm, int stream,
 			   int max_length,
 			   unsigned long private_value,
 			   struct snd_pcm_volume **info_ret);
+
+/*
+ * PCM User control API
+ */
+/* array element of usr elem */
+struct snd_pcm_usr_elem {
+	int val[128];
+};
+
+/* pp information; retrieved via snd_kcontrol_chip() */
+struct snd_pcm_usr {
+	struct snd_pcm *pcm;	/* assigned PCM instance */
+	int stream;		/* PLAYBACK or CAPTURE */
+	struct snd_kcontrol *kctl;
+	const struct snd_pcm_usr_elem *usr;
+	int max_length;
+	void *private_data;	/* optional: private data pointer */
+};
+
+int snd_pcm_add_usr_ctls(struct snd_pcm *pcm, int stream,
+			 const struct snd_pcm_usr_elem *usr,
+			 int max_length, int max_control_str_len,
+			 unsigned long private_value,
+			 struct snd_pcm_usr **info_ret);
 
 #endif /* __SOUND_PCM_H */

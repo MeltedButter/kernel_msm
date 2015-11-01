@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,6 +22,7 @@
 #include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/version.h>
+#include <linux/switch.h>
 
 #include "mdss_panel.h"
 #include "mdss_wb.h"
@@ -44,6 +45,11 @@ static int mdss_wb_check_params(struct mdss_panel_data *pdata,
 
 	if (!pdata || !new) {
 		pr_err("%s: Invalid input\n", __func__);
+		return -EINVAL;
+	}
+
+	if (new->xres >= 4096 || new->yres >= 4096) {
+		pr_err("%s: Invalid resolutions\n", __func__);
 		return -EINVAL;
 	}
 
@@ -121,25 +127,10 @@ static int mdss_wb_probe(struct platform_device *pdev)
 {
 	struct mdss_panel_data *pdata = NULL;
 	struct mdss_wb_ctrl *wb_ctrl = NULL;
-	struct mdss_panel_cfg *pan_cfg = NULL;
 	int rc = 0;
 
 	if (!pdev->dev.of_node)
 		return -ENODEV;
-
-	/*
-	 * In case HDMI is configured as primary, do not configure
-	 * WB. Currently there is no requirement for any other panel
-	 * in case HDMI is primary. Will revisit if WB is needed with
-	 * HDMI as primary.
-	 */
-	pan_cfg = mdss_panel_intf_type(MDSS_PANEL_INTF_HDMI);
-	if (IS_ERR(pan_cfg)) {
-		return PTR_ERR(pan_cfg);
-	} else if (pan_cfg) {
-		pr_debug("%s: HDMI is primary\n", __func__);
-		return -ENODEV;
-	}
 
 	wb_ctrl = devm_kzalloc(&pdev->dev, sizeof(*wb_ctrl), GFP_KERNEL);
 	if (!wb_ctrl)
@@ -151,12 +142,12 @@ static int mdss_wb_probe(struct platform_device *pdev)
 
 	rc = !mdss_wb_parse_dt(pdev, pdata);
 	if (!rc)
-		return rc;
+		goto error_no_mem;
 
 	rc = mdss_wb_dev_init(wb_ctrl);
 	if (rc) {
 		dev_err(&pdev->dev, "unable to set up device nodes for writeback panel\n");
-		return rc;
+		goto error_no_mem;
 	}
 
 	pdata->panel_info.type = WRITEBACK_PANEL;
@@ -170,9 +161,15 @@ static int mdss_wb_probe(struct platform_device *pdev)
 	rc = mdss_register_panel(pdev, pdata);
 	if (rc) {
 		dev_err(&pdev->dev, "unable to register writeback panel\n");
-		return rc;
+		goto error_init;
 	}
 
+	return rc;
+
+error_init:
+	mdss_wb_dev_uninit(wb_ctrl);
+error_no_mem:
+	devm_kfree(&pdev->dev, wb_ctrl);
 	return rc;
 }
 

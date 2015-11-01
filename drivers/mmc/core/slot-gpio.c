@@ -17,12 +17,16 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 
+#if defined(CONFIG_LGE_MMC_DYNAMIC_LOG)
+#include <linux/mmc/debug_log.h>
+#endif
+
 struct mmc_gpio {
 	int ro_gpio;
 	int cd_gpio;
 	char *ro_label;
-	char cd_label[0];
 	bool status;
+	char cd_label[0]; /* Must be last entry */
 };
 
 static int mmc_gpio_get_status(struct mmc_host *host)
@@ -47,6 +51,14 @@ static irqreturn_t mmc_gpio_cd_irqt(int irq, void *dev_id)
 	struct mmc_gpio *ctx = host->slot.handler_priv;
 	int status;
 
+	/*
+	 * In case host->ops are not yet initialized return immediately.
+	 * The card will get detected later when host driver calls
+	 * mmc_add_host() after host->ops are initialized.
+	 */
+	if (!host->ops)
+		goto out;
+
 	if (host->ops->card_event)
 		host->ops->card_event(host);
 
@@ -62,7 +74,16 @@ static irqreturn_t mmc_gpio_cd_irqt(int irq, void *dev_id)
 		ctx->status = status;
 
 		/* Schedule a card detection after a debounce timeout */
+
+		#ifdef CONFIG_MACH_LGE
+		/* LGE_CHANGE
+		* Reduce debounce time to make it more sensitive
+		* 2014-09-01, Z2G4-BSP-FileSys@lge.com
+		*/
+		mmc_detect_change(host, 0);
+		#else
 		mmc_detect_change(host, msecs_to_jiffies(200));
+		#endif
 	}
 out:
 

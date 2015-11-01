@@ -34,6 +34,7 @@
  * @bam_tx_ep_pipe_index : BAM RX Endpoint Pipe Index for HSUART
  * @no_suspend_delay : Flag used to make system go to suspend
  * immediately or not
+ * @obs: Flag to enable out of band sleep feature support
  */
 struct msm_serial_hs_platform_data {
 	int wakeup_irq;  /* wakeup irq */
@@ -49,6 +50,7 @@ struct msm_serial_hs_platform_data {
 	unsigned bam_tx_ep_pipe_index;
 	unsigned bam_rx_ep_pipe_index;
 	bool no_suspend_delay;
+	bool obs;
 };
 
 /* return true when tx is empty */
@@ -58,4 +60,17 @@ void msm_hs_request_clock_on(struct uart_port *uport);
 struct uart_port *msm_hs_get_uart_port(int port_index);
 void msm_hs_set_mctrl(struct uart_port *uport,
 				    unsigned int mctrl);
+//[P1_BRINGUP_S]
+//BT_S : [CONBT-966] Fix to Bluetooth sleep & uart driver
+#if defined(CONFIG_LGE_BLUESLEEP) || defined(CONFIG_LGE_BLUETOOTH_PM)
+#define CLOCK_REQUEST_AVAILABLE 	0
+#define CLOCK_REQUEST_UNAVAILABLE 	1
+struct uart_port * msm_hs_get_bt_uport(unsigned int line);
+int msm_hs_get_bt_uport_clock_state(struct uart_port *uport);
+#endif /* defined(CONFIG_LGE_BLUESLEEP) || defined(CONFIG_LGE_BLUETOOTH_PM) */
+//BT_E : [CONBT-966] Fix to Bluetooth sleep & uart driver
+//BT_S : [CONBT-966] Fix to HCI command timeout
+int msm_hs_get_pm_state_active(struct uart_port *uport);
+//BT_E : [CONBT-966] Fix to HCI command timeout
+//[P1_BRINGUP_E]
 #endif

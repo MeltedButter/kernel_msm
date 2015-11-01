@@ -727,11 +727,14 @@ static ssize_t rmnet_ctl_write(struct file *file, const char __user * buf,
 	status = rmnet_usb_ctrl_write_cmd(dev->cudev,
 			USB_CDC_SEND_ENCAPSULATED_COMMAND, 0, cpkt->data,
 			cpkt->data_size);
-	if (status > 0)
-		dev->cudev->snd_encap_cmd_cnt++;
 
 	kfree(cpkt->data);
 	kfree(cpkt);
+
+	if (status > 0) {
+		dev->cudev->snd_encap_cmd_cnt++;
+		return size;
+	}
 
 	return status;
 }
@@ -922,7 +925,6 @@ void rmnet_usb_ctrl_disconnect(struct rmnet_ctrl_udev *dev)
 {
 	struct rmnet_ctrl_dev *cdev;
 	int n;
-
 
 	clear_bit(RMNET_CTRL_DEV_READY, &dev->status);
 

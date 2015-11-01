@@ -1,7 +1,7 @@
 /**
  * dwc3_otg.h - DesignWare USB3 DRD Controller OTG
  *
- * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,23 +18,31 @@
 
 #include <linux/workqueue.h>
 #include <linux/power_supply.h>
-#include <linux/hrtimer.h>
 
 #include <linux/usb/otg.h>
 #include "power.h"
 
-#define DWC3_IDEV_CHG_MAX 1500
-#define DWC3_IDEV_CHG_MIN 500
-#define DWC_LS_DM	  0x1
-#define DWC_LS_DP	  0x2
-#define DWC3_LS		  0x3
+#ifdef CONFIG_LGE_PM_USB_ID
+#include <soc/qcom/lge/board_lge.h>
+#endif
 
+#define DWC3_IDEV_CHG_MAX 1500
+#define DWC3_HVDCP_CHG_MAX 1800
+
+/*
+ * Module param to override current drawn for DCP charger
+ * Declared in dwc3-msm module
+ */
+extern int dcp_max_current;
+
+#ifdef CONFIG_LGE_PM_USB_ID
+#define DWC3_USB30_CHG_CURRENT 900
+#endif
 struct dwc3_charger;
 
 /**
  * struct dwc3_otg: OTG driver data. Shared by HCD and DCD.
  * @otg: USB OTG Transceiver structure.
- * @irq: IRQ number assigned for HSUSB controller.
  * @regs: ioremapped register base address.
  * @sm_work: OTG state machine work.
  * @charger: DWC3 external charger detector
@@ -42,22 +50,20 @@ struct dwc3_charger;
  */
 struct dwc3_otg {
 	struct usb_otg		otg;
-	int			irq;
 	struct dwc3		*dwc;
 	void __iomem		*regs;
 	struct regulator	*vbus_otg;
 	struct delayed_work	sm_work;
 	struct dwc3_charger	*charger;
 	struct dwc3_ext_xceiv	*ext_xceiv;
-#define ID		0
-#define B_SESS_VLD	1
+#define ID		 0
+#define B_SESS_VLD	 1
+#define DWC3_OTG_SUSPEND 2
 	unsigned long inputs;
 	struct power_supply	*psy;
 	struct completion	dwc3_xcvr_vbus_init;
 	int			charger_retry_count;
 	int			vbus_retry_count;
-	int			false_sdp_retry_count;
-	struct timer_list	chg_check_timer;
 };
 
 /**
@@ -95,8 +101,13 @@ struct dwc3_charger {
 	/* to notify OTG about charger detection completion, provided by OTG */
 	void	(*notify_detection_complete)(struct usb_otg *otg,
 						struct dwc3_charger *charger);
-	/* get the charger linestate */
-	u32	(*get_linestate)(struct dwc3_charger *charger);
+#ifdef CONFIG_LGE_PM_USB_ID
+	void    (*read_cable_adc)(struct dwc3_charger *charger, bool start);
+	bool    adc_read_complete;
+#endif
+#ifdef CONFIG_DWC3_MSM_BC_12_VZW_SUPPORT
+	struct delayed_work	*drv_check_state_wq;
+#endif
 };
 
 /* for external charger driver */
@@ -117,7 +128,6 @@ enum dwc3_id_state {
 struct dwc3_ext_xceiv {
 	enum dwc3_id_state	id;
 	bool			bsv;
-	bool			otg_capability;
 
 	/* to notify OTG about LPM exit event, provided by OTG */
 	void	(*notify_ext_events)(struct usb_otg *otg,
@@ -130,5 +140,7 @@ struct dwc3_ext_xceiv {
 /* for external transceiver driver */
 extern int dwc3_set_ext_xceiv(struct usb_otg *otg,
 				struct dwc3_ext_xceiv *ext_xceiv);
-
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI4)
+extern void update_status(int code, int value);
+#endif
 #endif /* __LINUX_USB_DWC3_OTG_H */
